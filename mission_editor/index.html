@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OP — редактор миссий</title>
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">PYBRICKS · OP</p>
+        <h1>Редактор миссий</h1>
+      </div>
+      <div class="top-actions">
+        <label class="compact-field">
+          <span>Файл</span>
+          <select id="mission-select"></select>
+        </label>
+        <label class="compact-field">
+          <span>Имя файла</span>
+          <input id="filename" value="mission_3.json" />
+        </label>
+        <button id="load-button" class="button secondary">Загрузить</button>
+        <button id="export-button" class="button secondary">Скачать JSON</button>
+        <button id="save-button" class="button primary">Сохранить и собрать</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="mission-bar">
+        <label>
+          <span>Название миссии</span>
+          <input id="mission-name" value="Новая миссия" maxlength="60" />
+        </label>
+        <label>
+          <span>Цвет</span>
+          <select id="mission-color">
+            <option>BLACK</option>
+            <option>BLUE</option>
+            <option selected>CYAN</option>
+            <option>GREEN</option>
+            <option>MAGENTA</option>
+            <option>ORANGE</option>
+            <option>RED</option>
+            <option>VIOLET</option>
+            <option>WHITE</option>
+            <option>YELLOW</option>
+          </select>
+        </label>
+        <div class="mission-hint">
+          JSON сохраняется в проект, проверяется и собирается в Python для Pybricks.
+        </div>
+      </section>
+
+      <section class="workspace-layout">
+        <div class="editor-panel">
+          <div class="panel-heading">
+            <div>
+              <h2>Блоки программы</h2>
+              <p>Перетаскивай команды из левой панели и соединяй их.</p>
+            </div>
+            <button id="fit-button" class="icon-button" title="Показать все блоки">Вписать</button>
+          </div>
+          <div id="blockly"></div>
+        </div>
+
+        <aside class="map-panel">
+          <div class="panel-heading">
+            <div>
+              <h2>Карта поля</h2>
+              <p>110 × 230 см · масштаб в миллиметрах</p>
+            </div>
+            <span class="live-pill"><i></i> Предпросмотр</span>
+          </div>
+          <div class="map-settings">
+            <label><span>Старт X</span><input id="start-x" type="number" min="0" max="1100" step="10" value="550" /></label>
+            <label><span>Старт Y</span><input id="start-y" type="number" min="0" max="1100" step="10" value="120" /></label>
+            <label><span>Курс °</span><input id="start-heading" type="number" min="-360" max="360" step="5" value="0" /></label>
+          </div>
+          <div class="field-wrap">
+            <svg id="field" viewBox="0 0 2300 1100" role="img" aria-label="Поле 110 на 230 сантиметров">
+              <defs>
+                <pattern id="grid" width="100" height="100" patternUnits="userSpaceOnUse">
+                  <path d="M 100 0 L 0 0 0 100" fill="none" stroke="#315146" stroke-width="2" />
+                </pattern>
+              </defs>
+              <rect x="0" y="0" width="2300" height="1100" class="field-bg" />
+              <rect x="0" y="0" width="2300" height="1100" fill="url(#grid)" />
+              <g id="path-layer"></g>
+              <g id="robot-layer"></g>
+              <rect x="2" y="2" width="1096" height="2296" class="field-border" />
+            </svg>
+          </div>
+          <div class="map-legend">
+            <span><i class="legend-line"></i>Расчётная траектория</span>
+            <span><i class="legend-dot"></i>Начало</span>
+            <span class="map-note">Условие показывает обе возможные ветки; это не физическая симуляция.</span>
+          </div>
+        </aside>
+      </section>
+
+      <section class="bottom-bar">
+        <div id="status" class="status">Редактор готов. Сохрани миссию, чтобы собрать архив.</div>
+        <div class="bottom-hint">Параллельный блок запускает привод и независимые моторы E/F вместе. Одновременные команды приводу запрещены.</div>
+      </section>
+    </main>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

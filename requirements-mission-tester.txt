@@ -1,0 +1,2 @@
+# Requires Python 3.10 or newer.
+pybricksdev==2.3.2

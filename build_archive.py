@@ -1,0 +1,250 @@
+import ast
+import keyword
+from pathlib import Path
+from zipfile import ZIP_DEFLATED, ZipFile
+
+from mission_format import load_mission
+
+
+ROOT = Path(__file__).resolve().parent
+ARCHIVE_PATH = ROOT / "OP_pybricks_project.zip"
+ARCHIVE_FILES = (
+    ("pybricks_runtime/config.py", "config.py"),
+    ("pybricks_runtime/core.py", "core.py"),
+    ("pybricks_runtime/main.py", "main.py"),
+    ("pybricks_runtime/menu.py", "menu.py"),
+    ("pybricks_runtime/mission_recording.py", "mission_recording.py"),
+    ("mission_catalog.py", "mission_catalog.py"),
+    ("mission_1.py", "mission_1.py"),
+    ("mission_2.py", "mission_2.py"),
+    ("system_check.py", "system_check.py"),
+)
+
+
+def _load_json_missions():
+    missions = {}
+    for path in sorted(ROOT.glob("mission_*.json")):
+        module_name = path.stem
+        if not module_name.isidentifier() or keyword.iskeyword(module_name):
+            raise ValueError(
+                "Mission filename must form a Python module name: {}".format(
+                    path.name
+                )
+            )
+        missions[module_name] = load_mission(str(path))
+    return missions
+
+
+def _render_mission(module_name, mission):
+    lines = [
+        "# Generated from {}.json by build_archive.py.".format(module_name),
+        "from core import arc, att_left, att_right, att_run, att_wait, hub, straight, turn",
+        "from pybricks.tools import wait",
+        "",
+        "NAME = {!r}".format(mission["name"]),
+        "COLOR = {!r}".format(mission["color"]),
+        "",
+        "def run():",
+    ]
+
+    _render_steps(lines, mission["steps"], 1)
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+def _condition_expression(condition):
+    sensors = {
+        "heading_deg": "hub.imu.heading()",
+        "battery_mv": "hub.battery.voltage()",
+    }
+    if condition["sensor"] == "attachment_angle_deg":
+        motor = "att_left" if condition["port"] == "E" else "att_right"
+        sensor = "{}.angle()".format(motor)
+    else:
+        sensor = sensors[condition["sensor"]]
+    return "{} {} {!r}".format(
+        sensor, condition["operator"], condition["value"]
+    )
+
+
+def _render_steps(lines, steps, indent):
+    prefix = "    " * indent
+    for step in steps:
+        kind = step["type"]
+        if kind == "straight":
+            args = [repr(step["distance_mm"])]
+            if "speed_mm_s" in step:
+                args.append("speed={!r}".format(step["speed_mm_s"]))
+            lines.append("{}straight({})".format(prefix, ", ".join(args)))
+        elif kind == "turn":
+            args = [repr(step["angle_deg"])]
+            if "rate_deg_s" in step:
+                args.append("rate={!r}".format(step["rate_deg_s"]))
+            lines.append("{}turn({})".format(prefix, ", ".join(args)))
+        elif kind == "arc":
+            args = [repr(step["radius_mm"]), repr(step["angle_deg"])]
+            if "speed_mm_s" in step:
+                args.append("speed={!r}".format(step["speed_mm_s"]))
+            lines.append("{}arc({})".format(prefix, ", ".join(args)))
+        elif kind == "attachment":
+            motor = "att_left" if step["port"] == "E" else "att_right"
+            lines.append(
+                "{}att_run({}, {!r}, {!r})".format(
+                    prefix, motor, step["speed_deg_s"], step["angle_deg"]
+                )
+            )
+        elif kind == "wait":
+            lines.append("{}wait({!r})".format(prefix, step["duration_ms"]))
+        elif kind == "beep":
+            lines.append(
+                "{}hub.speaker.beep({!r}, {!r})".format(
+                    prefix, step["frequency_hz"], step["duration_ms"]
+                )
+            )
+        elif kind == "if":
+            lines.append("{}if {}:".format(prefix, _condition_expression(step["condition"])))
+            _render_steps(lines, step["then"], indent + 1)
+            if "else" in step:
+                lines.append("{}else:".format(prefix))
+                _render_steps(lines, step["else"], indent + 1)
+        elif kind == "repeat":
+            lines.append("{}for _ in range({}):".format(prefix, step["times"]))
+            _render_steps(lines, step["steps"], indent + 1)
+        elif kind == "parallel":
+            drive_steps = []
+            attachment_ports = []
+            for branch in step["branches"]:
+                resource = branch["resource"]
+                if resource == "drive":
+                    drive_steps = branch["steps"]
+                    continue
+                attachment = branch["steps"][0]
+                motor = "att_left" if resource == "E" else "att_right"
+                lines.append(
+                    "{}att_run({}, {!r}, {!r}, wait=False)".format(
+                        prefix,
+                        motor,
+                        attachment["speed_deg_s"],
+                        attachment["angle_deg"],
+                    )
+                )
+                attachment_ports.append((resource, motor))
+            if drive_steps:
+                _render_steps(lines, drive_steps, indent)
+            for _, motor in attachment_ports:
+                lines.append("{}att_wait({})".format(prefix, motor))
+
+
+
+def _catalog_missions(source):
+    tree = ast.parse(source)
+    imported = set(
+        node.module
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module
+    )
+    registered = set()
+
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(
+            isinstance(target, ast.Name) and target.id == "MISSION_MODULES"
+            for target in node.targets
+        ):
+            continue
+        if not isinstance(node.value, ast.Tuple):
+            raise ValueError("MISSION_MODULES must be a tuple")
+        for entry in node.value.elts:
+            if (
+                isinstance(entry, ast.Tuple)
+                and entry.elts
+                and isinstance(entry.elts[0], ast.Str)
+            ):
+                registered.add(entry.elts[0].s)
+        break
+    else:
+        raise ValueError("MISSION_MODULES tuple was not found in mission_catalog.py")
+
+    return imported, registered
+
+
+def _render_catalog(source, module_names):
+    imported, registered = _catalog_missions(source)
+    additions = [name for name in module_names if name not in registered]
+    if not additions:
+        return source
+
+    import_lines = []
+    for name in additions:
+        if name in imported:
+            continue
+        import_lines.extend(
+            (
+                "from {} import (".format(name),
+                "    COLOR as _{}_color,".format(name),
+                "    NAME as _{}_name,".format(name),
+                "    run as _{}_run,".format(name),
+                ")",
+            )
+        )
+
+    if import_lines:
+        marker = "MISSION_MODULES = ("
+        position = source.find(marker)
+        if position < 0:
+            raise ValueError("MISSION_MODULES tuple was not found in mission_catalog.py")
+        source = source[:position] + "\n".join(import_lines) + "\n\n" + source[position:]
+
+    marker = "\n)\n\nTEST_MODULES = ("
+    start = source.find("MISSION_MODULES = (")
+    position = source.find(marker, start)
+    if position < 0:
+        raise ValueError("Could not locate the end of MISSION_MODULES")
+    entries = "\n".join(
+        "    ({!r}, _{}_name, _{}_run, _{}_color),".format(name, name, name, name)
+        for name in additions
+    )
+    source = source[:position + 1] + entries + "\n" + source[position + 1:]
+    return source
+
+
+def build_archive():
+    sources = [
+        (ROOT / source_path, archive_path)
+        for source_path, archive_path in ARCHIVE_FILES
+    ]
+    missing = [str(source) for source, _ in sources if not source.is_file()]
+    if missing:
+        raise FileNotFoundError(
+            "Не найдены файлы проекта: {}".format(", ".join(missing))
+        )
+
+    missions = _load_json_missions()
+    catalog_source = (ROOT / "mission_catalog.py").read_text(encoding="utf-8")
+    catalog_source = _render_catalog(catalog_source, sorted(missions))
+    generated = {
+        module_name: _render_mission(module_name, mission)
+        for module_name, mission in missions.items()
+    }
+
+    archive_files = {}
+    for source, archive_name in sources:
+        if archive_name == "mission_catalog.py":
+            content = catalog_source.encode("utf-8")
+        elif archive_name.endswith(".py") and archive_name[:-3] in generated:
+            content = generated[archive_name[:-3]]
+        else:
+            content = source.read_bytes()
+        archive_files[archive_name] = content
+
+    for module_name, content in generated.items():
+        archive_files[module_name + ".py"] = content
+
+    with ZipFile(str(ARCHIVE_PATH), "w", ZIP_DEFLATED) as archive:
+        for archive_name, content in archive_files.items():
+            archive.writestr(archive_name, content)
+    return ARCHIVE_PATH
+
+
+if __name__ == "__main__":
+    print("Created archive: {}".format(build_archive()))
