@@ -23,11 +23,35 @@ COLORS = frozenset(
     )
 )
 STEP_TYPES = frozenset(
-    ("straight", "turn", "arc", "attachment", "wait", "beep", "if", "repeat", "parallel")
+    (
+        "straight",
+        "turn",
+        "turn_to",
+        "wheel_turn",
+        "arc",
+        "wall_square",
+        "attachment",
+        "att_until_stalled",
+        "set_att_accel",
+        "wait",
+        "beep",
+        "log",
+        "battery_check",
+        "set_speed",
+        "set_heading",
+        "rush",
+        "reset_start",
+        "stop",
+        "if",
+        "repeat",
+        "parallel",
+    )
 )
 MAX_STEPS = 200
 MAX_REPEAT = 100
 MAX_NESTING = 12
+# Движения, у которых есть then=Stop.NONE: только они могут быть «на проход».
+MOVEMENT_TYPES = frozenset(("straight", "turn", "turn_to", "wheel_turn", "arc"))
 
 
 def _check_keys(value, required, allowed, location):
@@ -106,6 +130,14 @@ def _validate_sequence(steps, location, depth=0):
         )
     for index, step in enumerate(steps):
         _validate_step(step, "{} step {}".format(location, index + 1), depth)
+        if step.get("through"):
+            following = steps[index + 1] if index + 1 < len(steps) else None
+            if following is None or following.get("type") not in MOVEMENT_TYPES:
+                raise MissionFormatError(
+                    "{} step {} is 'through' but the next command is not a movement".format(
+                        location, index + 1
+                    )
+                )
 
 
 def _validate_step(step, location, depth):
@@ -117,24 +149,33 @@ def _validate_step(step, location, depth):
         raise MissionFormatError(
             "{} has unsupported type {!r}".format(location, kind)
         )
+    if "through" in step:
+        if kind not in MOVEMENT_TYPES:
+            raise MissionFormatError(
+                "{}: 'through' is only valid for movements".format(location)
+            )
+        if type(step["through"]) is not bool:
+            raise MissionFormatError(
+                "{}.through must be true or false".format(location)
+            )
 
     if kind == "straight":
         required = {"type", "distance_mm"}
-        allowed = required | {"speed_mm_s"}
+        allowed = required | {"speed_mm_s", "through"}
         _check_keys(step, required, allowed, location)
         _number(step, "distance_mm", location, -5000, 5000, nonzero=True)
         if "speed_mm_s" in step:
             _number(step, "speed_mm_s", location, 1, 800)
     elif kind == "turn":
         required = {"type", "angle_deg"}
-        allowed = required | {"rate_deg_s"}
+        allowed = required | {"rate_deg_s", "through"}
         _check_keys(step, required, allowed, location)
         _number(step, "angle_deg", location, -360, 360, nonzero=True)
         if "rate_deg_s" in step:
             _number(step, "rate_deg_s", location, 1, 360)
     elif kind == "arc":
         required = {"type", "radius_mm", "angle_deg"}
-        allowed = required | {"speed_mm_s"}
+        allowed = required | {"speed_mm_s", "through"}
         _check_keys(step, required, allowed, location)
         _number(step, "radius_mm", location, -5000, 5000, nonzero=True)
         _number(step, "angle_deg", location, -360, 360, nonzero=True)
@@ -158,6 +199,81 @@ def _validate_step(step, location, depth):
         _check_keys(step, required, required, location)
         _number(step, "frequency_hz", location, 50, 4000, integer=True)
         _number(step, "duration_ms", location, 1, 1000, integer=True)
+    elif kind == "turn_to":
+        required = {"type", "heading_deg"}
+        allowed = required | {"rate_deg_s", "through"}
+        _check_keys(step, required, allowed, location)
+        _number(step, "heading_deg", location, -360, 360)
+        if "rate_deg_s" in step:
+            _number(step, "rate_deg_s", location, 1, 360)
+    elif kind == "wheel_turn":
+        required = {"type", "angle_deg", "locked"}
+        allowed = required | {"rate_deg_s", "through"}
+        _check_keys(step, required, allowed, location)
+        if step["locked"] not in ("LEFT", "RIGHT"):
+            raise MissionFormatError(
+                "{}.locked must be LEFT or RIGHT".format(location)
+            )
+        _number(step, "angle_deg", location, -360, 360, nonzero=True)
+        if "rate_deg_s" in step:
+            _number(step, "rate_deg_s", location, 1, 360)
+    elif kind == "wall_square":
+        required = {"type", "heading_deg"}
+        allowed = required | {"duty", "duration_ms"}
+        _check_keys(step, required, allowed, location)
+        _number(step, "heading_deg", location, -360, 360)
+        if "duty" in step:
+            _number(step, "duty", location, -100, 100, nonzero=True)
+        if "duration_ms" in step:
+            _number(step, "duration_ms", location, 50, 3000, integer=True)
+    elif kind == "set_speed":
+        required = {"type", "profile"}
+        _check_keys(step, required, required, location)
+        if step["profile"] not in ("FAST", "MEDIUM", "SLOW", "SLOWW"):
+            raise MissionFormatError(
+                "{}.profile must be FAST, MEDIUM, SLOW, or SLOWW".format(location)
+            )
+    elif kind == "set_heading":
+        required = {"type", "heading_deg"}
+        _check_keys(step, required, required, location)
+        _number(step, "heading_deg", location, -360, 360)
+    elif kind == "rush":
+        required = {"type", "enabled"}
+        _check_keys(step, required, required, location)
+        if type(step["enabled"]) is not bool:
+            raise MissionFormatError("{}.enabled must be true or false".format(location))
+    elif kind == "stop":
+        required = {"type", "scope"}
+        _check_keys(step, required, required, location)
+        if step["scope"] not in ("drive", "all", "release"):
+            raise MissionFormatError(
+                "{}.scope must be drive, all, or release".format(location)
+            )
+    elif kind == "att_until_stalled":
+        required = {"type", "port", "speed_deg_s"}
+        allowed = required | {"duty_limit"}
+        _check_keys(step, required, allowed, location)
+        if step["port"] not in ("E", "F"):
+            raise MissionFormatError("{}.port must be E or F".format(location))
+        _number(step, "speed_deg_s", location, -1000, 1000, nonzero=True)
+        if "duty_limit" in step:
+            _number(step, "duty_limit", location, 1, 100, integer=True)
+    elif kind == "set_att_accel":
+        required = {"type", "accel_deg_s2"}
+        _check_keys(step, required, required, location)
+        _number(step, "accel_deg_s2", location, 10, 2000)
+    elif kind == "battery_check":
+        _check_keys(step, {"type"}, {"type"}, location)
+    elif kind == "reset_start":
+        _check_keys(step, {"type"}, {"type"}, location)
+    elif kind == "log":
+        required = {"type", "message"}
+        _check_keys(step, required, required, location)
+        message = step["message"]
+        if not isinstance(message, str) or not message.strip() or len(message) > 120:
+            raise MissionFormatError(
+                "{}.message must be 1 to 120 characters".format(location)
+            )
     elif kind == "if":
         required = {"type", "condition", "then"}
         allowed = required | {"else"}
@@ -203,7 +319,15 @@ def _validate_step(step, location, depth):
             _validate_sequence(branch["steps"], branch_location + ".steps", depth + 1)
             if resource == "drive":
                 for branch_step in branch["steps"]:
-                    if branch_step.get("type") not in ("straight", "turn", "arc", "wait"):
+                    if branch_step.get("type") not in (
+                        "straight",
+                        "turn",
+                        "turn_to",
+                        "wheel_turn",
+                        "arc",
+                        "wall_square",
+                        "wait",
+                    ):
                         raise MissionFormatError(
                             "{} drive lane only supports movement and wait blocks".format(
                                 branch_location
@@ -244,8 +368,8 @@ def validate_mission(mission):
             raise MissionFormatError("Mission.start_pose must be an object")
         pose_fields = {"x_mm", "y_mm", "heading_deg"}
         _check_keys(pose, pose_fields, pose_fields, "Mission.start_pose")
-        _number(pose, "x_mm", "Mission.start_pose", 0, 1100)
-        _number(pose, "y_mm", "Mission.start_pose", 0, 2300)
+        _number(pose, "x_mm", "Mission.start_pose", 0, 2000)
+        _number(pose, "y_mm", "Mission.start_pose", 0, 1140)
         _number(pose, "heading_deg", "Mission.start_pose", -360, 360)
 
     _validate_sequence(mission["steps"], "Mission.steps")

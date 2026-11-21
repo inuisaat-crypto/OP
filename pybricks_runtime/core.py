@@ -14,6 +14,12 @@ core.py — соревновательная основа робота: конс
 then=Stop.NONE — только если следующая команда тоже движение: иначе робот продолжит ехать (straight,
 arc) или вращаться (turn, wheel_turn), пока его не остановит следующее движение.
 
+Отладочные флаги (раздел 1): DEBUG_LOG — журнал движений, DEBUG_BEEP — служебные писки,
+DEBUG_RAISE — пробрасывать исключения из миссии в меню с полным traceback.
+На соревнованиях DEBUG_LOG = DEBUG_BEEP = False: каждый print и beep стоит времени.
+Калибровка под железо — в разделе 1 (WHEEL_DIAMETER, AXLE_TRACK, GYRO_HEADING_CORRECTION,
+SPEED_PROFILES, RUSH_*); сводка значений — calibration_report().
+
 Частоты beep — под прошивку 4.1.0+: до 4.0.1 хаб пищал вдвое выше заданного, поэтому значения
 удвоены (звучат так же, как раньше). На прошивке 4.0.1 они прозвучат на октаву выше.
 
@@ -204,8 +210,10 @@ GYRO_HEADING_CORRECTION = 361.35  # сколько градусов хаб на�
                                   # Прошивка принимает только 345–375, иначе программа упадёт при старте
 GYRO_CAL_TURNS = 3
 
-# --- Отладка ---
+# --- Отладка и звук ---
 DEBUG_RAISE = False               # True: полный traceback ошибки в миссии (для тренировок)
+DEBUG_LOG = True                  # True: журнал движений; на соревнованиях False — каждый print стоит времени
+DEBUG_BEEP = True                 # True: служебные писки; на соревнованиях False — ни одного лишнего сигнала
 
 LEFT = "left"
 RIGHT = "right"
@@ -271,7 +279,17 @@ class MoveError(Exception):
 # =====================================================================
 
 def log(*parts):
-    print("{:>7}".format(_clock.time()), *parts)
+    if DEBUG_LOG:
+        print("{:>7}".format(_clock.time()), *parts)
+
+
+def beep(frequency_hz=880, duration_ms=80):
+    """
+    Служебный сигнал миссии. При DEBUG_BEEP = False молчит: на соревнованиях
+    каждый beep — это ~0,1 с ожидания, а отладочные метки там не нужны.
+    """
+    if DEBUG_BEEP:
+        hub.speaker.beep(frequency_hz, duration_ms)
 
 
 def _clamp(x, low, high):
@@ -288,7 +306,7 @@ def _auto_timeout(amount, speed, accel):
 def _fail(reason):
     """Движение не завершено: журнал + звук, при необходимости — прервать миссию."""
     log("!!", reason)
-    hub.speaker.beep(600, 60)
+    beep(600, 60)
     if ABORT_ON_FAIL:
         raise MoveError(reason)
     return False
@@ -345,6 +363,25 @@ def limit_profiles():
             p["turn"] = int(MAX_TURN_RATE)
 
 
+def calibration_report():
+    """
+    Что перемерять при смене робота, колёс или мата. Вызывается вручную из консоли
+    (или из миссии-теста); в обычных миссиях не используется и время не тратит.
+    """
+    log("== КАЛИБРОВКА ==")
+    log("колесо", WHEEL_DIAMETER, "мм · колея", AXLE_TRACK, "мм")
+    log("гироскоп", GYRO_HEADING_CORRECTION, "°/оборот · проверка", GYRO_CAL_TURNS, "оборота")
+    log("мотор", int(_MOTOR_MAX), "°/с →", int(MAX_DRIVE_SPEED), "мм/с · поворот", int(MAX_TURN_RATE), "°/с")
+    for name in (FAST, MEDIUM, SLOW, SLOWW):
+        p = SPEED_PROFILES[name]
+        log(" ", name, p["speed"], "мм/с ·", p["accel"], "мм/с² ·", p["turn"], "°/с ·",
+            p["turn_accel"], "°/с²")
+    log("rush", RUSH_V_END, "°/с выход ·", RUSH_LEAD_MAX, "° ранний выход ·",
+        RUSH_PREALIGN, "° доворот")
+    log("стык", STRAIGHT_LINE_CARRY_MS, "мс перенос линии ·", LOOP_MS, "мс цикл ·",
+        STALL_GRACE_MS, "мс до проверки упора")
+
+
 def _drive_settings():
     """Настройки DriveBase из профиля: нужны для arc() и для ограничения ускорения drive()."""
     global _arc_v
@@ -374,10 +411,11 @@ def set_speed(name):
 
 def set_heading(heading=0):
     """Принять текущий курс робота за `heading` градусов на поле."""
-    global _target_heading
+    global _target_heading, _line_carry
     heading = round(heading)
     robot.reset(0, heading)       # при use_gyro(True) гироскоп тоже устанавливается в это значение
     _target_heading = heading
+    _line_carry = None            # линия привязана к прежнему курсу — после сброса она не годится
 
 
 def rush(on=True):
@@ -432,7 +470,10 @@ def straight(distance, speed=None, heading=None, then=Stop.HOLD, timeout=None, u
     # без остановки тем же курсом — его линия и смещение сохраняются.
     y = 0.0                       # боковое смещение от линии, мм (положительное — по часовой стрелке от курса)
     y_int = 0.0                   # ∫y dt, мм·с
-    if carry is not None and carry[0] == target and _clock.time() - carry[3] <= STRAIGHT_LINE_CARRY_MS:
+    # Перенос линии — только в том же направлении: при езде назад знак y уже учтён
+    # множителем direction, поэтому чужое смещение увело бы робота не в ту сторону.
+    if (carry is not None and carry[0] == target and carry[3] == direction
+            and _clock.time() - carry[4] <= STRAIGHT_LINE_CARRY_MS):
         y, y_int = carry[1], carry[2]
     omega_f = None                # отфильтрованная ω
 
@@ -501,7 +542,7 @@ def straight(distance, speed=None, heading=None, then=Stop.HOLD, timeout=None, u
         _hold_robot()             # таймаут/упор при Stop.NONE: стоим (иначе drive() едет дальше, как в arc())
     psi_end = hub.imu.heading() - target
     if then == Stop.NONE and ok:
-        _line_carry = (target, y, y_int, _clock.time())
+        _line_carry = (target, y, y_int, direction, _clock.time())
     log("straight {} -> {:.1f} мм, ошибка курса {:.1f}°, от линии {:.1f} мм".format(
         distance, robot.distance() - start, -psi_end, y))
     return ok
@@ -805,8 +846,9 @@ def turn_to(heading, rate=None, then=Stop.HOLD, timeout=None):
     rate — °/с (только для этого поворота); если не задано — скорость профиля.
     Поворот контролируется не по времени и градусам мотора, а по гироскопу.
     """
-    global _target_heading
+    global _target_heading, _line_carry
     _target_heading = heading
+    _line_carry = None            # после поворота прежняя линия уже не актуальна
     w_max = min(abs(rate), MAX_TURN_RATE) if rate else _profile["turn"]
     accel = _profile["turn_accel"]
     if timeout is None:
@@ -833,9 +875,10 @@ def wheel_turn(angle, locked=RIGHT, rate=None, then=Stop.HOLD, timeout=None):
     (не больше MAX_WHEEL_TURN_RATE). Управление — LQR-цикл turn() (_turn_lqr с pivot),
     опорное колесо всё время стоит в hold.
     """
-    global _target_heading
+    global _target_heading, _line_carry
     target = _target_heading + angle
     _target_heading = target
+    _line_carry = None            # пивот тоже меняет курс — линия straight() больше не подходит
     if locked == RIGHT:
         moving, fixed, sign = left_motor, right_motor, 1
     else:
@@ -1032,6 +1075,8 @@ def att_run_until_stalled(motor, speed, duty_limit=None, then=Stop.COAST,
 
 def reset_start():
     """Перед каждым стартом: обнулить счётчики, восстановить профили."""
+    global _line_carry
+    _line_carry = None            # иначе первая миссия подхватила бы линию предыдущей
     robot.stop()
     wait(250)                     # пусть утихнут колебания от прикосновения рукой
     att_left.reset_angle(0)
@@ -1047,9 +1092,9 @@ def battery_check():
     mv = hub.battery.voltage()
     if mv < BATTERY_LOW_MV:
         log("Батарея {:.2f} V — низкий заряд, скорость и точность могут упасть!".format(mv / 1000))
-        hub.speaker.beep(880, 80)
+        beep(880, 80)
         wait(70)
-        hub.speaker.beep(880, 80)
+        beep(880, 80)
     elif mv < BATTERY_WARN_MV:
         log("Батарея {:.2f} V — скоро зарядить".format(mv / 1000))
     return mv
@@ -1062,20 +1107,24 @@ def battery_tick(timer):
     timer.reset()
     mv = hub.battery.voltage()
     if mv < BATTERY_LOW_MV:
-        hub.speaker.beep(880, 80)
+        beep(880, 80)
         wait(70)
-        hub.speaker.beep(880, 80)
+        beep(880, 80)
     elif mv < BATTERY_WARN_MV:
-        hub.speaker.beep(880, 80)
+        beep(880, 80)
 
 
 def stop_drive():
     """Остановить привод и удержать робота на текущем месте."""
+    global _line_carry
+    _line_carry = None            # остановка обрывает переход: линию продолжать нечем
     _hold_robot()
 
 
 def release_drive():
     """Остановить привод и отпустить моторы для ручного перемещения робота."""
+    global _line_carry
+    _line_carry = None
     robot.stop()
     left_motor.stop()
     right_motor.stop()

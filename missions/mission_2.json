@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "name": "route",
+  "color": "MAGENTA",
+  "start_pose": {
+    "x_mm": 1150,
+    "y_mm": 550,
+    "heading_deg": 0
+  },
+  "steps": [
+    {
+      "type": "attachment",
+      "port": "F",
+      "angle_deg": 80,
+      "speed_deg_s": 800
+    },
+    {
+      "type": "attachment",
+      "port": "F",
+      "angle_deg": -90,
+      "speed_deg_s": 800
+    },
+    {
+      "type": "straight",
+      "distance_mm": -100,
+      "speed_mm_s": 800
+    },
+    {
+      "type": "attachment",
+      "port": "F",
+      "angle_deg": 40,
+      "speed_deg_s": 800
+    },
+    {
+      "type": "straight",
+      "distance_mm": 90,
+      "speed_mm_s": 800
+    },
+    {
+      "type": "attachment",
+      "port": "F",
+      "angle_deg": 160,
+      "speed_deg_s": 800
+    }
+  ]
+}

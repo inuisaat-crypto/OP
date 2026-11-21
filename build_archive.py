@@ -1,5 +1,6 @@
 import ast
 import keyword
+import re
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
@@ -7,7 +8,37 @@ from mission_format import load_mission
 
 
 ROOT = Path(__file__).resolve().parent
-ARCHIVE_PATH = ROOT / "OP_pybricks_project.zip"
+MISSIONS_DIR = ROOT / "missions"
+ARCHIVE_PATH = MISSIONS_DIR / "OP_pybricks_project.zip"
+
+# Всё, что сгенерированная миссия может взять из core. Импорт пишется только на
+# реально использованные имена: у хаба мало RAM, и лишние имена в модуле миссии
+# остаются в памяти на всё время работы программы.
+CORE_EXPORTS = (
+    "arc",
+    "att_left",
+    "att_right",
+    "att_run",
+    "att_run_until_stalled",
+    "att_wait",
+    "battery_check",
+    "beep",
+    "hub",
+    "log",
+    "release_drive",
+    "reset_start",
+    "rush",
+    "set_att_accel",
+    "set_heading",
+    "set_speed",
+    "stop_all",
+    "stop_drive",
+    "straight",
+    "turn",
+    "turn_to",
+    "wall_square",
+    "wheel_turn",
+)
 ARCHIVE_FILES = (
     ("pybricks_runtime/config.py", "config.py"),
     ("pybricks_runtime/core.py", "core.py"),
@@ -23,7 +54,7 @@ ARCHIVE_FILES = (
 
 def _load_json_missions():
     missions = {}
-    for path in sorted(ROOT.glob("mission_*.json")):
+    for path in sorted(MISSIONS_DIR.glob("mission_*.json")):
         module_name = path.stem
         if not module_name.isidentifier() or keyword.iskeyword(module_name):
             raise ValueError(
@@ -36,18 +67,38 @@ def _load_json_missions():
 
 
 def _render_mission(module_name, mission):
+    body = []
+    _render_steps(body, mission["steps"], 1)
+    if not body:
+        body = ["    pass"]
+    body_text = "\n".join(body)
+
+    imports = []
+    core_names = [
+        name for name in CORE_EXPORTS if re.search(r"\b" + name + r"\b", body_text)
+    ]
+    if core_names:
+        imports.append("from core import " + ", ".join(sorted(core_names)))
+    if "Stop." in body_text:
+        imports.append("from pybricks.parameters import Stop")
+    if re.search(r"\bwait\(", body_text):
+        imports.append("from pybricks.tools import wait")
+
     lines = [
         "# Generated from {}.json by build_archive.py.".format(module_name),
-        "from core import arc, att_left, att_right, att_run, att_wait, hub, straight, turn",
-        "from pybricks.tools import wait",
-        "",
-        "NAME = {!r}".format(mission["name"]),
-        "COLOR = {!r}".format(mission["color"]),
-        "",
-        "def run():",
+        "# Импортируются только те имена, которые миссия действительно вызывает.",
     ]
-
-    _render_steps(lines, mission["steps"], 1)
+    lines.extend(imports)
+    lines.extend(
+        [
+            "",
+            "NAME = {!r}".format(mission["name"]),
+            "COLOR = {!r}".format(mission["color"]),
+            "",
+            "def run():",
+        ]
+    )
+    lines.extend(body)
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
@@ -74,16 +125,22 @@ def _render_steps(lines, steps, indent):
             args = [repr(step["distance_mm"])]
             if "speed_mm_s" in step:
                 args.append("speed={!r}".format(step["speed_mm_s"]))
+            if step.get("through"):
+                args.append("then=Stop.NONE")
             lines.append("{}straight({})".format(prefix, ", ".join(args)))
         elif kind == "turn":
             args = [repr(step["angle_deg"])]
             if "rate_deg_s" in step:
                 args.append("rate={!r}".format(step["rate_deg_s"]))
+            if step.get("through"):
+                args.append("then=Stop.NONE")
             lines.append("{}turn({})".format(prefix, ", ".join(args)))
         elif kind == "arc":
             args = [repr(step["radius_mm"]), repr(step["angle_deg"])]
             if "speed_mm_s" in step:
                 args.append("speed={!r}".format(step["speed_mm_s"]))
+            if step.get("through"):
+                args.append("then=Stop.NONE")
             lines.append("{}arc({})".format(prefix, ", ".join(args)))
         elif kind == "attachment":
             motor = "att_left" if step["port"] == "E" else "att_right"
@@ -96,10 +153,61 @@ def _render_steps(lines, steps, indent):
             lines.append("{}wait({!r})".format(prefix, step["duration_ms"]))
         elif kind == "beep":
             lines.append(
-                "{}hub.speaker.beep({!r}, {!r})".format(
+                "{}beep({!r}, {!r})".format(
                     prefix, step["frequency_hz"], step["duration_ms"]
                 )
             )
+        elif kind == "turn_to":
+            args = [repr(step["heading_deg"])]
+            if "rate_deg_s" in step:
+                args.append("rate={!r}".format(step["rate_deg_s"]))
+            if step.get("through"):
+                args.append("then=Stop.NONE")
+            lines.append("{}turn_to({})".format(prefix, ", ".join(args)))
+        elif kind == "wheel_turn":
+            args = [
+                repr(step["angle_deg"]),
+                "locked={!r}".format(step["locked"].lower()),
+            ]
+            if "rate_deg_s" in step:
+                args.append("rate={!r}".format(step["rate_deg_s"]))
+            if step.get("through"):
+                args.append("then=Stop.NONE")
+            lines.append("{}wheel_turn({})".format(prefix, ", ".join(args)))
+        elif kind == "wall_square":
+            args = [repr(step["heading_deg"])]
+            if "duty" in step:
+                args.append("duty={!r}".format(step["duty"]))
+            if "duration_ms" in step:
+                args.append("duration={!r}".format(step["duration_ms"]))
+            lines.append("{}wall_square({})".format(prefix, ", ".join(args)))
+        elif kind == "set_speed":
+            lines.append("{}set_speed({!r})".format(prefix, step["profile"]))
+        elif kind == "set_heading":
+            lines.append("{}set_heading({!r})".format(prefix, step["heading_deg"]))
+        elif kind == "rush":
+            lines.append("{}rush({!r})".format(prefix, step["enabled"]))
+        elif kind == "stop":
+            call = {
+                "drive": "stop_drive",
+                "all": "stop_all",
+                "release": "release_drive",
+            }[step["scope"]]
+            lines.append("{}{}()".format(prefix, call))
+        elif kind == "att_until_stalled":
+            motor = "att_left" if step["port"] == "E" else "att_right"
+            args = [motor, repr(step["speed_deg_s"])]
+            if "duty_limit" in step:
+                args.append("duty_limit={!r}".format(step["duty_limit"]))
+            lines.append("{}att_run_until_stalled({})".format(prefix, ", ".join(args)))
+        elif kind == "set_att_accel":
+            lines.append("{}set_att_accel({!r})".format(prefix, step["accel_deg_s2"]))
+        elif kind == "battery_check":
+            lines.append("{}battery_check()".format(prefix))
+        elif kind == "reset_start":
+            lines.append("{}reset_start()".format(prefix))
+        elif kind == "log":
+            lines.append("{}log({!r})".format(prefix, step["message"]))
         elif kind == "if":
             lines.append("{}if {}:".format(prefix, _condition_expression(step["condition"])))
             _render_steps(lines, step["then"], indent + 1)
@@ -158,9 +266,10 @@ def _catalog_missions(source):
             if (
                 isinstance(entry, ast.Tuple)
                 and entry.elts
-                and isinstance(entry.elts[0], ast.Str)
+                and isinstance(entry.elts[0], ast.Constant)
+                and isinstance(entry.elts[0].value, str)
             ):
-                registered.add(entry.elts[0].s)
+                registered.add(entry.elts[0].value)
         break
     else:
         raise ValueError("MISSION_MODULES tuple was not found in mission_catalog.py")
@@ -240,6 +349,7 @@ def build_archive():
     for module_name, content in generated.items():
         archive_files[module_name + ".py"] = content
 
+    MISSIONS_DIR.mkdir(parents=True, exist_ok=True)
     with ZipFile(str(ARCHIVE_PATH), "w", ZIP_DEFLATED) as archive:
         for archive_name, content in archive_files.items():
             archive.writestr(archive_name, content)

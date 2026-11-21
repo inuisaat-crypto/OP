@@ -1,8 +1,0 @@
-{
-  "version": 1,
-  "name": "route",
-  "color": "MAGENTA",
-  "steps": [
-    {"type": "straight", "distance_mm": 825, "speed_mm_s": 750}
-  ]
-}

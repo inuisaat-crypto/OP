@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "name": "Миссия 4 — маршрут 0–5",
+  "color": "CYAN",
+  "start_pose": {
+    "x_mm": 285,
+    "y_mm": 115,
+    "heading_deg": 0
+  },
+  "steps": [
+    {
+      "type": "rush",
+      "enabled": true
+    },
+    {
+      "type": "straight",
+      "distance_mm": 920,
+      "speed_mm_s": 800
+    },
+    {
+      "type": "beep",
+      "frequency_hz": 880,
+      "duration_ms": 100
+    },
+    {
+      "type": "attachment",
+      "port": "F",
+      "angle_deg": 90,
+      "speed_deg_s": 300
+    },
+    {
+      "type": "straight",
+      "distance_mm": -300,
+      "speed_mm_s": 800
+    },
+    {
+      "type": "turn",
+      "angle_deg": 140,
+      "rate_deg_s": 360
+    },
+    {
+      "type": "straight",
+      "distance_mm": 300,
+      "speed_mm_s": 800
+    },
+    {
+      "type": "turn",
+      "angle_deg": -90,
+      "rate_deg_s": 360
+    },
+    {
+      "type": "beep",
+      "frequency_hz": 880,
+      "duration_ms": 100
+    },
+    {
+      "type": "turn",
+      "angle_deg": 130,
+      "rate_deg_s": 360
+    },
+    {
+      "type": "straight",
+      "distance_mm": 450,
+      "speed_mm_s": 800
+    },
+    {
+      "type": "turn",
+      "angle_deg": -90,
+      "rate_deg_s": 360
+    },
+    {
+      "type": "straight",
+      "distance_mm": 500,
+      "speed_mm_s": 800
+    },
+    {
+      "type": "turn",
+      "angle_deg": -40,
+      "rate_deg_s": 360
+    },
+    {
+      "type": "beep",
+      "frequency_hz": 880,
+      "duration_ms": 100
+    },
+    {
+      "type": "turn",
+      "angle_deg": 40,
+      "rate_deg_s": 360
+    },
+    {
+      "type": "straight",
+      "distance_mm": -700,
+      "speed_mm_s": 300
+    }
+  ]
+}

@@ -1,10 +1,12 @@
 """Terminal validator and dry-run preview for JSON missions."""
 
 import asyncio
+import hashlib
 import math
 import shutil
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -12,9 +14,16 @@ from mission_format import MissionFormatError, load_mission
 
 
 ROOT = Path(__file__).resolve().parent
+MISSIONS_DIR = ROOT / "missions"
+AXLE_TRACK_MM = 165
 STEP_DELAY_SECONDS = 0.4
 SIMULATION_PATH_LIMIT = 16
 SIMULATION_STEP_LIMIT = 10000
+MISSION_WATCH_INTERVAL_SECONDS = 0.25
+
+
+class MissionUploadError(RuntimeError):
+    pass
 
 
 def _print(message):
@@ -28,9 +37,10 @@ def _print(message):
     sys.stdout.write(text + "\n")
 
 
-def discover_missions(directory=ROOT):
+def discover_missions(directory=None):
+    folder = Path(directory) if directory is not None else MISSIONS_DIR
     return sorted(
-        Path(directory).glob("mission_*.json"),
+        folder.glob("mission_*.json"),
         key=lambda path: path.name.lower(),
     )
 
@@ -83,9 +93,47 @@ def describe_step(step):
                 for branch in step["branches"]
             )
         )
-    return "Beep {} Hz for {} ms".format(
-        step["frequency_hz"], step["duration_ms"]
-    )
+    if kind == "beep":
+        return "Beep {} Hz for {} ms".format(
+            step["frequency_hz"], step["duration_ms"]
+        )
+    if kind == "turn_to":
+        text = "Turn to {} deg".format(step["heading_deg"])
+        if "rate_deg_s" in step:
+            text += " at {} deg/s".format(step["rate_deg_s"])
+        return text
+    if kind == "wheel_turn":
+        text = "Pivot turn {} deg on {}".format(
+            step["angle_deg"], step["locked"].lower()
+        )
+        if "rate_deg_s" in step:
+            text += " at {} deg/s".format(step["rate_deg_s"])
+        return text
+    if kind == "wall_square":
+        return "Wall square to {} deg ({} ms)".format(
+            step["heading_deg"], step.get("duration_ms", 800)
+        )
+    if kind == "set_speed":
+        return "Speed profile {}".format(step["profile"])
+    if kind == "set_heading":
+        return "Set heading reference {} deg".format(step["heading_deg"])
+    if kind == "rush":
+        return "Rush mode {}".format("on" if step["enabled"] else "off")
+    if kind == "stop":
+        return "Stop: {}".format(step["scope"])
+    if kind == "att_until_stalled":
+        return "Attachment {} until stalled at {} deg/s".format(
+            step["port"], step["speed_deg_s"]
+        )
+    if kind == "set_att_accel":
+        return "Attachment acceleration {} deg/s2".format(step["accel_deg_s2"])
+    if kind == "battery_check":
+        return "Battery check"
+    if kind == "reset_start":
+        return "Reset start state"
+    if kind == "log":
+        return "Log: {}".format(step["message"])
+    return "Step {!r}".format(kind)
 
 
 def advance_pose(x, y, heading, step):
@@ -96,6 +144,22 @@ def advance_pose(x, y, heading, step):
         y += distance * math.cos(angle)
     elif step["type"] == "turn":
         heading += step["angle_deg"]
+    elif step["type"] == "turn_to":
+        heading = step["heading_deg"]
+    elif step["type"] == "wheel_turn":
+        delta = step["angle_deg"]
+        half = AXLE_TRACK_MM / 2
+        offset = -half if step["locked"] == "RIGHT" else half
+        start = math.radians(heading)
+        ox = offset * math.cos(start)
+        oy = -offset * math.sin(start)
+        cos_d = math.cos(math.radians(delta))
+        sin_d = math.sin(math.radians(delta))
+        nx = ox * cos_d + oy * sin_d
+        ny = -ox * sin_d + oy * cos_d
+        x += nx - ox
+        y += ny - oy
+        heading += delta
     elif step["type"] == "arc":
         radius = step["radius_mm"]
         start = math.radians(heading)
@@ -287,13 +351,13 @@ async def _wait_for_disconnect(connection_updates, connection_state):
             return
 
 
-async def _wait_for_escape():
+async def _wait_for_stop_key():
     import msvcrt
 
     while True:
         if msvcrt.kbhit():
             key = msvcrt.getwch()
-            if key == "\x1b":
+            if key.lower() == "q" or key == "\x1b":
                 return
             if key in ("\x00", "\xe0"):
                 msvcrt.getwch()
@@ -319,18 +383,29 @@ async def _run_bluetooth_mission(hub, mission):
 
         try:
             _print("Uploading mission to the hub...")
-            await hub.run(
-                str(runner), wait=False, print_output=True, line_handler=True
-            )
-            _print("Mission running. Press ESC to stop.")
+            try:
+                await hub.download(str(runner))
+            except (BleakError, OSError) as error:
+                if (
+                    hub.connection_state_observable.value
+                    != ConnectionState.CONNECTED
+                ):
+                    raise RuntimeError(
+                        "Bluetooth disconnected during upload. The mission "
+                        "was not started; restart the tester to reconnect."
+                    ) from error
+                raise MissionUploadError(str(error)) from error
+
+            await hub.run(wait=False, print_output=True, line_handler=True)
+            _print("Mission running. Press Q (or Esc) to stop.")
             completion_task = asyncio.ensure_future(
                 _wait_for_program_stop(status_updates, StatusFlag)
             )
-            escape_task = asyncio.ensure_future(_wait_for_escape())
+            stop_key_task = asyncio.ensure_future(_wait_for_stop_key())
             disconnect_task = asyncio.ensure_future(
                 _wait_for_disconnect(connection_updates, ConnectionState)
             )
-            tasks.extend((completion_task, escape_task, disconnect_task))
+            tasks.extend((completion_task, stop_key_task, disconnect_task))
 
             done, _ = await asyncio.wait(
                 tasks, return_when=asyncio.FIRST_COMPLETED
@@ -348,7 +423,7 @@ async def _run_bluetooth_mission(hub, mission):
                     await hub.stop_user_program()
                 except (BleakError, OSError, RuntimeError) as error:
                     raise RuntimeError(
-                        "Could not send the ESC stop command. Press the hub's "
+                        "Could not send the Q stop command. Press the hub's "
                         "CENTER button if the robot is still moving: {}".format(
                             error
                         )
@@ -378,15 +453,93 @@ async def _run_bluetooth_mission(hub, mission):
                 await asyncio.gather(*tasks, return_exceptions=True)
 
 
+def _mission_file_revision(path):
+    return hashlib.sha256(Path(path).read_bytes()).digest()
+
+
+def _watch_mission_file(path, initial_revision, stop_event):
+    candidate_revision = None
+    reported_read_error = None
+    while not stop_event.wait(MISSION_WATCH_INTERVAL_SECONDS):
+        try:
+            revision = _mission_file_revision(path)
+        except OSError as error:
+            message = str(error)
+            if message != reported_read_error:
+                _print("Could not monitor mission JSON changes: {}".format(error))
+                reported_read_error = message
+            continue
+        reported_read_error = None
+        if revision == initial_revision:
+            candidate_revision = None
+        elif revision == candidate_revision:
+            _print(
+                "Mission JSON changed. The current run will continue; "
+                "choose 1 after it stops to load the updated file."
+            )
+            return
+        else:
+            candidate_revision = revision
+
+
+async def _run_bluetooth_mission_menu(hub, mission_path):
+    previous_revision = None
+    while True:
+        try:
+            mission = load_mission(mission_path)
+            revision = _mission_file_revision(mission_path)
+        except (OSError, UnicodeError, MissionFormatError) as error:
+            _print("Mission file error: {}".format(error))
+            return
+
+        if previous_revision is None:
+            _show_mission(mission)
+            _print("The robot will move. Clear the area before selecting a mission.")
+        elif revision != previous_revision:
+            _print("Updated mission JSON loaded:")
+            _show_mission(mission)
+
+        previous_revision = revision
+        stop_watcher = threading.Event()
+        watcher_thread = threading.Thread(
+            target=_watch_mission_file,
+            args=(mission_path, revision, stop_watcher),
+            name="mission-json-watcher",
+            daemon=True,
+        )
+        watcher_thread.start()
+        try:
+            try:
+                await _run_bluetooth_mission(hub, mission)
+            except MissionUploadError as error:
+                _print(
+                    "Mission upload failed; the mission was not started: {}".format(
+                        error
+                    )
+                )
+                _print("  1. Retry upload")
+            else:
+                _print("Mission menu:")
+                _print("  1. Restart this mission")
+            _print("  2. Return to the mission list")
+            while True:
+                choice = input("Select 1 or 2: ").strip()
+                if choice == "1":
+                    break
+                if choice == "2":
+                    return
+                _print("Invalid selection.")
+        finally:
+            stop_watcher.set()
+            watcher_thread.join(timeout=1.0)
+
+
 async def _bluetooth_session():
     from pybricksdev.ble import find_device
     from pybricksdev.connections.pybricks import PybricksHubBLE
 
-    name = input(
-        "Hub name/address (press Enter to use the first Pybricks hub found): "
-    ).strip()
     _print("Searching for a Pybricks hub over Bluetooth...")
-    device = await find_device(name=name or None, timeout=20)
+    device = await find_device(timeout=20)
     hub = PybricksHubBLE(device)
     await hub.connect()
 
@@ -395,13 +548,15 @@ async def _bluetooth_session():
         while True:
             missions = discover_missions()
             if not missions:
-                _print("No mission_*.json files found next to mission_tester.py.")
+                _print("No mission_*.json files found in missions/.")
                 return 0
 
             _print("Available JSON missions:")
             for index, path in enumerate(missions):
                 _print("  {}. {}".format(index + 1, path.name))
-            choice = input("Select a number, or q to disconnect: ").strip().lower()
+            choice = input(
+                "Select a mission (it starts immediately), or q to disconnect: "
+            ).strip().lower()
             if choice == "q":
                 return 0
             if not choice.isdigit() or not (1 <= int(choice) <= len(missions)):
@@ -409,22 +564,7 @@ async def _bluetooth_session():
                 continue
 
             path = missions[int(choice) - 1]
-            try:
-                mission = load_mission(path)
-            except (OSError, UnicodeError, MissionFormatError) as error:
-                _print("Mission error: {}".format(error))
-                continue
-
-            _show_mission(mission)
-            _print(
-                "The robot will move. Clear the area before starting; "
-                "type RUN to upload and start this mission."
-            )
-            if input("> ").strip().upper() != "RUN":
-                _print("Mission not started.")
-                continue
-
-            await _run_bluetooth_mission(hub, mission)
+            await _run_bluetooth_mission_menu(hub, path)
     finally:
         await hub.disconnect()
 
@@ -438,7 +578,7 @@ def _run_bluetooth_mode():
         )
         return 1
     if sys.platform != "win32":
-        _print("ESC stop-key support is currently available only on Windows.")
+        _print("Mission stop-key support is currently available only on Windows.")
         return 1
 
     try:
@@ -465,7 +605,7 @@ def _run_offline_mode():
     while True:
         missions = discover_missions()
         if not missions:
-            _print("No mission_*.json files found next to mission_tester.py.")
+            _print("No mission_*.json files found in missions/.")
             return 1
 
         _print("JSON mission tester (offline dry-run)")
@@ -492,18 +632,12 @@ def _run_offline_mode():
 
 
 def main():
-    while True:
-        _print("JSON mission tester")
-        _print("  1. Connect over Bluetooth and run on the robot")
-        _print("  2. Offline dry-run")
-        choice = input("Select a mode, or q to quit: ").strip().lower()
-        if choice == "q":
-            return 0
-        if choice == "1":
-            return _run_bluetooth_mode()
-        if choice == "2":
-            return _run_offline_mode()
-        _print("Invalid selection.")
+    if sys.argv[1:] == ["--offline"]:
+        return _run_offline_mode()
+    if len(sys.argv) > 1:
+        _print("Usage: mission_tester.py [--offline]")
+        return 2
+    return _run_bluetooth_mode()
 
 
 if __name__ == "__main__":

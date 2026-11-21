@@ -1,3 +1,6 @@
 /mission_editor/node_modules/
 /mission_editor/dist/
 /.venv-mission-tester/
+/.agents/
+/.claude/
+/_pycache_/

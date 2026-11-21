@@ -43,17 +43,27 @@ class MissionFormatTests(unittest.TestCase):
 
     def test_accepts_valid_editor_start_pose(self):
         self.mission["start_pose"] = {
-            "x_mm": 550,
-            "y_mm": 120,
+            "x_mm": 2000,
+            "y_mm": 1140,
             "heading_deg": 0,
         }
         self.write_mission(self.mission)
-        self.assertEqual(load_mission(self.path)["start_pose"]["x_mm"], 550)
+        self.assertEqual(load_mission(self.path)["start_pose"]["x_mm"], 2000)
 
     def test_rejects_start_pose_outside_field(self):
         self.mission["start_pose"] = {
-            "x_mm": 1101,
-            "y_mm": 120,
+            "x_mm": 2001,
+            "y_mm": 550,
+            "heading_deg": 0,
+        }
+        self.write_mission(self.mission)
+        with self.assertRaises(MissionFormatError):
+            load_mission(self.path)
+
+    def test_rejects_start_pose_beyond_short_field_edge(self):
+        self.mission["start_pose"] = {
+            "x_mm": 1000,
+            "y_mm": 1141,
             "heading_deg": 0,
         }
         self.write_mission(self.mission)
@@ -137,6 +147,79 @@ class MissionFormatTests(unittest.TestCase):
 
     def test_rejects_unknown_step_type(self):
         self.mission["steps"][0] = {"type": "teleport"}
+        self.write_mission(self.mission)
+        with self.assertRaises(MissionFormatError):
+            load_mission(self.path)
+
+    def test_accepts_extended_robot_commands(self):
+        self.mission["steps"] = [
+            {"type": "turn_to", "heading_deg": 0, "rate_deg_s": 90},
+            {"type": "wheel_turn", "angle_deg": 45, "locked": "RIGHT", "rate_deg_s": 120},
+            {"type": "wall_square", "heading_deg": 0, "duty": 35, "duration_ms": 800},
+            {"type": "set_speed", "profile": "SLOW"},
+            {"type": "set_heading", "heading_deg": 0},
+            {"type": "rush", "enabled": True},
+            {"type": "stop", "scope": "drive"},
+            {"type": "att_until_stalled", "port": "E", "speed_deg_s": 400, "duty_limit": 80},
+            {"type": "set_att_accel", "accel_deg_s2": 600},
+            {"type": "log", "message": "точка 1"},
+            {"type": "battery_check"},
+            {"type": "reset_start"},
+        ]
+        self.write_mission(self.mission)
+        self.assertEqual(len(load_mission(self.path)["steps"]), 12)
+
+    def test_rejects_wheel_turn_without_locked_wheel(self):
+        self.mission["steps"] = [{"type": "wheel_turn", "angle_deg": 45}]
+        self.write_mission(self.mission)
+        with self.assertRaises(MissionFormatError):
+            load_mission(self.path)
+
+    def test_rejects_empty_log_message(self):
+        self.mission["steps"] = [{"type": "log", "message": "   "}]
+        self.write_mission(self.mission)
+        with self.assertRaises(MissionFormatError):
+            load_mission(self.path)
+
+    def test_accepts_through_between_consecutive_movements(self):
+        self.mission["steps"] = [
+            {"type": "straight", "distance_mm": 200, "through": True},
+            {"type": "turn", "angle_deg": 90},
+        ]
+        self.write_mission(self.mission)
+        self.assertTrue(load_mission(self.path)["steps"][0]["through"])
+
+    def test_rejects_through_on_last_step(self):
+        self.mission["steps"] = [
+            {"type": "straight", "distance_mm": 200, "through": True}
+        ]
+        self.write_mission(self.mission)
+        with self.assertRaises(MissionFormatError):
+            load_mission(self.path)
+
+    def test_rejects_through_before_non_movement(self):
+        self.mission["steps"] = [
+            {"type": "straight", "distance_mm": 200, "through": True},
+            {"type": "wait", "duration_ms": 100},
+        ]
+        self.write_mission(self.mission)
+        with self.assertRaises(MissionFormatError):
+            load_mission(self.path)
+
+    def test_rejects_through_on_non_movement_step(self):
+        self.mission["steps"] = [
+            {"type": "wait", "duration_ms": 100, "through": True},
+            {"type": "straight", "distance_mm": 50},
+        ]
+        self.write_mission(self.mission)
+        with self.assertRaises(MissionFormatError):
+            load_mission(self.path)
+
+    def test_rejects_non_bool_through(self):
+        self.mission["steps"] = [
+            {"type": "straight", "distance_mm": 50, "through": "yes"},
+            {"type": "straight", "distance_mm": 50},
+        ]
         self.write_mission(self.mission)
         with self.assertRaises(MissionFormatError):
             load_mission(self.path)

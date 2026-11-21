@@ -36,6 +36,27 @@ class _Button:
     RIGHT = "right"
 
 
+class _System:
+    def __init__(self):
+        self.stop_button = "preset"
+
+    def set_stop_button(self, value):
+        self.stop_button = value
+
+
+class _MenuHub:
+    def __init__(self):
+        self.system = _System()
+
+
+class _Motor:
+    def __init__(self):
+        self.stops = 0
+
+    def stop(self):
+        self.stops += 1
+
+
 class MenuTests(unittest.TestCase):
     def test_categories_are_stacked_and_top_tile_is_selected(self):
         hub = _Hub()
@@ -67,6 +88,75 @@ class MenuTests(unittest.TestCase):
     def test_left_and_right_select_the_two_categories(self):
         self.assertEqual(menu._category_from_button({_Button.LEFT}, _Button), 0)
         self.assertEqual(menu._category_from_button({_Button.RIGHT}, _Button), 1)
+
+
+    def test_mission_error_is_caught_when_debug_raise_is_off(self):
+        calls = []
+
+        def mission():
+            raise ValueError("boom")
+
+        with patch("builtins.print"):
+            result = menu._execute_mission(
+                mission,
+                lambda: calls.append("reset"),
+                lambda: calls.append("battery"),
+                RuntimeError,
+                False,
+            )
+
+        self.assertEqual(result, "failed")
+        self.assertEqual(calls, ["reset", "battery"])
+
+    def test_mission_error_is_reraised_when_debug_raise_is_on(self):
+        def mission():
+            raise ValueError("boom")
+
+        with patch("builtins.print"):
+            with self.assertRaises(ValueError):
+                menu._execute_mission(
+                    mission, lambda: None, lambda: None, RuntimeError, True
+                )
+
+    def test_system_exit_is_reported_as_stopped(self):
+        def mission():
+            raise SystemExit
+
+        with patch("builtins.print"):
+            result = menu._execute_mission(
+                mission, lambda: None, lambda: None, RuntimeError, False
+            )
+
+        self.assertEqual(result, "stopped")
+
+    def test_move_error_is_reported_as_failed(self):
+        class MoveError(Exception):
+            pass
+
+        def mission():
+            raise MoveError("упор")
+
+        with patch("builtins.print"):
+            result = menu._execute_mission(
+                mission, lambda: None, lambda: None, MoveError, False
+            )
+
+        self.assertEqual(result, "failed")
+
+    def test_cleanup_restores_hub_state(self):
+        hub = _MenuHub()
+        left, right = _Motor(), _Motor()
+        rush_values = []
+        stopped = []
+
+        menu._cleanup(
+            hub, _Button, rush_values.append, lambda: stopped.append("all"), left, right
+        )
+
+        self.assertEqual(rush_values, [False])
+        self.assertEqual(stopped, ["all"])
+        self.assertEqual((left.stops, right.stops), (1, 1))
+        self.assertIsNone(hub.system.stop_button)
 
 
 if __name__ == "__main__":

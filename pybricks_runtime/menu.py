@@ -1,4 +1,13 @@
-"""Hub menu for statically cataloged mission and test modules."""
+"""Меню хаба: статический каталог миссий и тестов.
+
+Меню не должно падать на соревнованиях: любая ошибка внутри миссии (кроме
+SystemExit от кнопки-стопа) останавливает моторы и возвращает управление
+в список. При DEBUG_RAISE = True исключение пробрасывается с traceback —
+это режим тренировки, когда ошибку нужно увидеть целиком.
+"""
+
+import sys
+
 
 def next_mission_index(current, direction, mission_count):
     if type(mission_count) is not int or mission_count <= 0:
@@ -67,6 +76,45 @@ def _show_categories(hub, selected, Color):
     print("OP | Раздел: {}".format(labels[selected]))
 
 
+def _execute_mission(mission, reset_start, battery_check, MoveError, DEBUG_RAISE):
+    """Выполнить миссию и вернуть 'ok' / 'stopped' / 'failed'.
+
+    Моторы здесь НЕ останавливаются: это делает вызывающий в finally, чтобы
+    остановка случилась и тогда, когда при DEBUG_RAISE исключение уходит наверх.
+    """
+    try:
+        reset_start()
+        battery_check()
+        mission()
+        return "ok"
+    except SystemExit:
+        return "stopped"
+    except KeyboardInterrupt:
+        return "stopped"
+    except MoveError as error:
+        print("OP | Ошибка движения: {}".format(error))
+        return "failed"
+    except Exception as error:
+        if DEBUG_RAISE:
+            raise
+        print("OP | Сбой миссии: {}: {}".format(type(error).__name__, error))
+        if hasattr(sys, "print_exception"):
+            try:
+                sys.print_exception(error)
+            except Exception:
+                pass
+        return "failed"
+
+
+def _cleanup(hub, Button, rush, stop_all, left_motor, right_motor):
+    """Чистое состояние хаба: обычный режим, моторы стоят, кнопка-стоп свободна."""
+    rush(False)
+    stop_all()
+    left_motor.stop()
+    right_motor.stop()
+    hub.system.set_stop_button(None)
+
+
 def _run_section(
     hub,
     title,
@@ -79,7 +127,9 @@ def _run_section(
     left_motor,
     right_motor,
     stop_all,
+    rush,
     MoveError,
+    DEBUG_RAISE,
 ):
     if not items:
         print("OP | В разделе «{}» нет файлов.".format(title))
@@ -119,21 +169,12 @@ def _run_section(
 
                 print("OP | Запуск: {}".format(label))
                 hub.system.set_stop_button(Button.CENTER)
-                result = "ok"
                 try:
-                    reset_start()
-                    battery_check()
-                    mission()
-                except SystemExit:
-                    result = "stopped"
-                except MoveError as error:
-                    result = "failed"
-                    print("OP | Ошибка движения: {}".format(error))
+                    result = _execute_mission(
+                        mission, reset_start, battery_check, MoveError, DEBUG_RAISE
+                    )
                 finally:
-                    stop_all()
-                    left_motor.stop()
-                    right_motor.stop()
-                    hub.system.set_stop_button(None)
+                    _cleanup(hub, Button, rush, stop_all, left_motor, right_motor)
 
                 if result == "ok":
                     print("OP | Готово: {}".format(label))
@@ -148,12 +189,14 @@ def _run_section(
 
 def run_mission_menu(mission_modules, test_modules):
     from core import (
+        DEBUG_RAISE,
         MoveError,
         battery_check,
         hub,
         left_motor,
         reset_start,
         right_motor,
+        rush,
         stop_all,
     )
     from pybricks.parameters import Button, Color
@@ -164,45 +207,48 @@ def run_mission_menu(mission_modules, test_modules):
         ("Тесты", test_modules),
     )
     selected = 0
-    hub.system.set_stop_button(None)
-    stop_all()
-    left_motor.stop()
-    right_motor.stop()
+    _cleanup(hub, Button, rush, stop_all, left_motor, right_motor)
     _wait_for_release(hub, wait)
 
-    while True:
-        _show_categories(hub, selected, Color)
+    try:
         while True:
-            pressed = hub.buttons.pressed()
-            if Button.LEFT in pressed and Button.RIGHT in pressed:
-                _wait_for_release(hub, wait)
-                return
-            category = _category_from_button(pressed, Button)
-            if category is not None:
-                selected = category
-                _wait_for_release(hub, wait)
-                break
-            if Button.CENTER in pressed:
-                _wait_for_release(hub, wait)
-                title, catalog_entries = sections[selected]
-                items = (
-                    discover_missions(catalog_entries, Color)
-                    if selected == 0
-                    else discover_tests(catalog_entries, Color)
-                )
-                _run_section(
-                    hub,
-                    title,
-                    items,
-                    Button,
-                    Color,
-                    wait,
-                    reset_start,
-                    battery_check,
-                    left_motor,
-                    right_motor,
-                    stop_all,
-                    MoveError,
-                )
-                break
-            wait(10)
+            _show_categories(hub, selected, Color)
+            while True:
+                pressed = hub.buttons.pressed()
+                if Button.LEFT in pressed and Button.RIGHT in pressed:
+                    _wait_for_release(hub, wait)
+                    return
+                category = _category_from_button(pressed, Button)
+                if category is not None:
+                    selected = category
+                    _wait_for_release(hub, wait)
+                    break
+                if Button.CENTER in pressed:
+                    _wait_for_release(hub, wait)
+                    title, catalog_entries = sections[selected]
+                    items = (
+                        discover_missions(catalog_entries, Color)
+                        if selected == 0
+                        else discover_tests(catalog_entries, Color)
+                    )
+                    _run_section(
+                        hub,
+                        title,
+                        items,
+                        Button,
+                        Color,
+                        wait,
+                        reset_start,
+                        battery_check,
+                        left_motor,
+                        right_motor,
+                        stop_all,
+                        rush,
+                        MoveError,
+                        DEBUG_RAISE,
+                    )
+                    break
+                wait(10)
+    finally:
+        # Даже если исключение ушло наверх (DEBUG_RAISE), хаб остаётся в покое.
+        _cleanup(hub, Button, rush, stop_all, left_motor, right_motor)
