@@ -29,11 +29,15 @@ class _Hub:
 class _Color:
     CYAN = "cyan"
     YELLOW = "yellow"
+    WHITE = "white"
+    RED = "red"
+    ORANGE = "orange"
 
 
 class _Button:
     LEFT = "left"
     RIGHT = "right"
+    CENTER = "center"
 
 
 class _System:
@@ -57,7 +61,79 @@ class _Motor:
         self.stops += 1
 
 
+class _SectionDisplay:
+    def __init__(self):
+        self.numbers = []
+        self.chars = []
+
+    def number(self, value):
+        self.numbers.append(value)
+
+    def char(self, value):
+        self.chars.append(value)
+
+
+class _SectionLight:
+    def __init__(self):
+        self.color = None
+
+    def on(self, color):
+        self.color = color
+
+
+class _SectionButtons:
+    """Кнопки по сценарию: каждый вызов pressed() отдаёт следующее состояние."""
+
+    def __init__(self, states):
+        self._states = list(states)
+
+    def pressed(self):
+        if self._states:
+            return self._states.pop(0)
+        return set()
+
+
+class _SectionHub:
+    def __init__(self, states):
+        self.display = _SectionDisplay()
+        self.light = _SectionLight()
+        self.buttons = _SectionButtons(states)
+        self.system = _System()
+
+
 class MenuTests(unittest.TestCase):
+    def _run_section(self, results, states):
+        """Запустить _run_section с миссиями (имя, исключение) и вернуть журнал."""
+        hub = _SectionHub(states)
+        launches = []
+
+        items = []
+        for name, error in results:
+            def mission(name=name, error=error):
+                launches.append(name)
+                if error is not None:
+                    raise error
+
+            items.append((name, mission, _Color.CYAN))
+
+        menu._run_section(
+            hub,
+            "Миссии",
+            items,
+            _Button,
+            _Color,
+            lambda _ms: None,
+            lambda: None,
+            lambda: None,
+            _Motor(),
+            _Motor(),
+            lambda: None,
+            lambda _value: None,
+            RuntimeError,
+            False,
+        )
+        return hub, launches
+
     def test_categories_are_stacked_and_top_tile_is_selected(self):
         hub = _Hub()
 
@@ -89,6 +165,49 @@ class MenuTests(unittest.TestCase):
         self.assertEqual(menu._category_from_button({_Button.LEFT}, _Button), 0)
         self.assertEqual(menu._category_from_button({_Button.RIGHT}, _Button), 1)
 
+    def test_success_moves_selection_to_next_mission(self):
+        with patch("builtins.print"):
+            hub, launches = self._run_section(
+                [("М1", None), ("М2", None)],
+                [{_Button.CENTER}, set(), {_Button.LEFT, _Button.RIGHT}, set()],
+            )
+
+        self.assertEqual(launches, ["М1"])
+        self.assertEqual(hub.display.numbers, [1, 2])
+
+    def test_last_mission_wraps_selection_to_first(self):
+        with patch("builtins.print"):
+            hub, launches = self._run_section(
+                [("М1", None), ("М2", None)],
+                [
+                    {_Button.RIGHT},
+                    set(),
+                    {_Button.CENTER},
+                    set(),
+                    {_Button.LEFT, _Button.RIGHT},
+                    set(),
+                ],
+            )
+
+        self.assertEqual(launches, ["М2"])
+        self.assertEqual(hub.display.numbers, [1, 2, 1])
+
+    def test_failed_or_stopped_mission_keeps_selection(self):
+        for outcome in (ValueError("boom"), SystemExit()):
+            with self.subTest(outcome=type(outcome).__name__):
+                with patch("builtins.print"):
+                    hub, launches = self._run_section(
+                        [("М1", outcome), ("М2", None)],
+                        [
+                            {_Button.CENTER},
+                            set(),
+                            {_Button.LEFT, _Button.RIGHT},
+                            set(),
+                        ],
+                    )
+
+                self.assertEqual(launches, ["М1"])
+                self.assertEqual(hub.display.numbers, [1, 1])
 
     def test_mission_error_is_caught_when_debug_raise_is_off(self):
         calls = []

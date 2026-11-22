@@ -3,4 +3,8 @@
 /.venv-mission-tester/
 /.agents/
 /.claude/
-/_pycache_/
+/graphify-out/
+__pycache__/
+*.py[cod]
+/.clinerules/
+

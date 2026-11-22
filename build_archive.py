@@ -46,8 +46,6 @@ ARCHIVE_FILES = (
     ("pybricks_runtime/menu.py", "menu.py"),
     ("pybricks_runtime/mission_recording.py", "mission_recording.py"),
     ("mission_catalog.py", "mission_catalog.py"),
-    ("mission_1.py", "mission_1.py"),
-    ("mission_2.py", "mission_2.py"),
     ("system_check.py", "system_check.py"),
 )
 
@@ -240,7 +238,6 @@ def _render_steps(lines, steps, indent):
                 _render_steps(lines, drive_steps, indent)
             for _, motor in attachment_ports:
                 lines.append("{}att_wait({})".format(prefix, motor))
-
 
 
 def _catalog_missions(source):

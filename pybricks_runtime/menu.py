@@ -178,6 +178,11 @@ def _run_section(
 
                 if result == "ok":
                     print("OP | Готово: {}".format(label))
+                    # Успешный запуск сдвигает выбор на следующий пункт, чтобы
+                    # после возврата робота на базу не искать миссию заново.
+                    # «Назад» в entries не участвует: len(items) — только пункты.
+                    selected = next_mission_index(selected, 1, len(items))
+                    print("OP | Следующая миссия: {}".format(entries[selected][0]))
                 else:
                     hub.display.char("!")
                     hub.light.on(Color.RED if result == "failed" else Color.ORANGE)

@@ -13,7 +13,7 @@ editor with a field preview.
 
 - `pybricks_runtime/` — code that runs on the hub: `core.py` (LQR moves, attachments),
   `config.py`, `main.py`, `menu.py`, `mission_recording.py`.
-- `missions/` — `mission_1..4.json` + built `OP_pybricks_project.zip` (JSON never goes into the ZIP).
+- `missions/` — `mission_1..6.json` + built `OP_pybricks_project.zip` (JSON never goes into the ZIP).
 - `mission_format.py` — the single source of truth for the JSON schema (`STEP_TYPES`).
 - `build_archive.py` — JSON → `.py` renderer + ZIP builder.
 - `mission_tester.py` — Bluetooth runner, `--offline` dry-run, pose preview math.
@@ -26,7 +26,7 @@ editor with a field preview.
 ## Commands (Windows PowerShell)
 
 ```powershell
-# tests (43 total, run from repo root)
+# tests (all, run from repo root)
 .\.venv-mission-tester\Scripts\python.exe -m unittest discover -s tests
 
 # archive: missions/*.json -> missions/OP_pybricks_project.zip
@@ -95,11 +95,16 @@ Rules that bite:
 
 ## Known details
 
+- `mission_catalog.py` in the source tree holds only `TEST_MODULES`; `build_archive.py`
+  appends every JSON mission to the catalog inside the ZIP.
 - `mission_3.json` starts at `x_mm: 100`, so the editor correctly warns that the
   robot is partly off the field — that is the data, not a bug.
 - `build_archive.py` uses `ast.Constant` (not `ast.Str`) — required on Python 3.14.
-- `missions/` is still untracked in git; `git add missions` when ready.
-- `.gitignore`, `__pycache__` noise: ignore when checking `git status`.
+- After a successful mission the hub menu advances to the next mission; after a
+  failure or stop it keeps the current one.
+- `missions/mission_5.json` and `mission_6.json` are not tracked in git yet; add
+  them together with the rebuilt ZIP when the drafts are final.
+- Python caches (`__pycache__/`, `*.pyc`) are ignored and must not be committed.
 
 ## Before finishing a change
 
