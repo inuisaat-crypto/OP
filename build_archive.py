@@ -1,7 +1,11 @@
 import ast
+import asyncio
 import keyword
 import re
+import subprocess
+import sys
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from mission_format import load_mission
@@ -353,5 +357,159 @@ def build_archive():
     return ARCHIVE_PATH
 
 
+def _extract_archive(archive_path, directory):
+    """Распаковать собранный ZIP во временную папку и вернуть путь к main.py."""
+    archive_path = Path(archive_path)
+    if not archive_path.is_file():
+        raise FileNotFoundError("Архив не найден: {}".format(archive_path))
+
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    with ZipFile(str(archive_path)) as archive:
+        for name in archive.namelist():
+            if not name.endswith(".py") or "/" in name or "\\" in name:
+                raise ValueError(
+                    "В архиве неожиданный файл: {!r}".format(name)
+                )
+        archive.extractall(str(directory))
+
+    main_path = directory / "main.py"
+    if not main_path.is_file():
+        raise ValueError("В архиве нет main.py")
+    return main_path
+
+
+async def _wait_for_program_start(hub, status_flag, timeout=3.0):
+    """Дождаться, пока хаб подтвердит, что пользовательская программа запущена."""
+    started = asyncio.Event()
+
+    def handle_status(status):
+        if status & status_flag.USER_PROGRAM_RUNNING:
+            started.set()
+
+    subscription = hub.status_observable.subscribe(handle_status)
+    try:
+        try:
+            await asyncio.wait_for(started.wait(), timeout)
+        except asyncio.TimeoutError:
+            return False
+    finally:
+        subscription.dispose()
+    return True
+
+
+async def _install_archive_async(archive_path, run_program, scan_timeout):
+    from pybricksdev.ble import find_device
+    from pybricksdev.ble.pybricks import StatusFlag
+    from pybricksdev.connections.pybricks import PybricksHubBLE
+
+    with TemporaryDirectory(prefix="op_install_") as directory:
+        main_path = _extract_archive(archive_path, directory)
+
+        print("Searching for a Pybricks hub over Bluetooth...")
+        device = await find_device(timeout=scan_timeout)
+        if device is None:
+            raise RuntimeError(
+                "Pybricks-хаб не найден. Проверь, что он включён и не подключён "
+                "к Pybricks Code."
+            )
+        hub = PybricksHubBLE(device)
+        await hub.connect()
+        try:
+            print("Connected to {}.".format(device.name or device.address))
+            print("Uploading the archive to the hub...")
+            await hub.download(str(main_path))
+            print("Upload complete.")
+
+            if not run_program:
+                print(
+                    "The program is in hub RAM and is not started. "
+                    "Powering the hub off clears it."
+                )
+                return 0
+
+            print("Starting the hub menu...")
+            await hub.run(wait=False, print_output=True, line_handler=True)
+            if not await _wait_for_program_start(hub, StatusFlag):
+                print(
+                    "The program was uploaded, but the hub did not confirm "
+                    "that it started. Check the hub display."
+                )
+                return 1
+            print("The hub menu is running. Disconnecting is safe.")
+            return 0
+        finally:
+            await hub.disconnect()
+
+
+def install_archive(archive_path, run_program=True, scan_timeout=20):
+    """Загрузить собранный архив на хаб так же, как это делает Pybricks Code."""
+    if sys.version_info < (3, 10):
+        print(
+            "Для Bluetooth-установки нужен Python 3.10+ и отдельное окружение: "
+            "py -3 -m pip install -r requirements-mission-tester.txt"
+        )
+        return 1
+
+    try:
+        from bleak.exc import BleakError
+        import pybricksdev  # noqa: F401
+    except ImportError as error:
+        print(
+            "Bluetooth-зависимости не установлены: {}. Используй "
+            ".venv-mission-tester\\Scripts\\python.exe или установи "
+            "requirements-mission-tester.txt.".format(error)
+        )
+        return 1
+
+    try:
+        return asyncio.run(
+            _install_archive_async(Path(archive_path), run_program, scan_timeout)
+        )
+    except asyncio.TimeoutError:
+        print("Bluetooth-поиск хаба истёк. Проверь, что хаб включён.")
+        return 1
+    except (
+        BleakError,
+        OSError,
+        RuntimeError,
+        ValueError,
+        subprocess.CalledProcessError,
+    ) as error:
+        print("Не удалось установить архив: {}".format(error))
+        return 1
+
+
+USAGE = "Usage: build_archive.py [--install [--no-run]]"
+
+
+def main(argv=None):
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    install = False
+    run_program = True
+
+    for argument in arguments:
+        if argument == "--install":
+            install = True
+        elif argument == "--no-run":
+            run_program = False
+        elif argument in ("-h", "--help"):
+            print(USAGE)
+            return 0
+        else:
+            print(USAGE)
+            return 2
+
+    if not install and not run_program:
+        print("--no-run используется только вместе с --install.")
+        return 2
+
+    archive_path = build_archive()
+    print("Created archive: {}".format(archive_path))
+    if not install:
+        return 0
+    return install_archive(archive_path, run_program=run_program)
+
+
 if __name__ == "__main__":
-    print("Created archive: {}".format(build_archive()))
+    sys.exit(main())

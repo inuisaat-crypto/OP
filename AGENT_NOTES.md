@@ -32,6 +32,12 @@ editor with a field preview.
 # archive: missions/*.json -> missions/OP_pybricks_project.zip
 python build_archive.py
 
+# build + install on the hub over Bluetooth (same pipeline as Pybricks Code)
+.\\.venv-mission-tester\\Scripts\\python.exe build_archive.py --install
+
+# build + upload without starting
+.\\.venv-mission-tester\\Scripts\\python.exe build_archive.py --install --no-run
+
 # offline mission dry-run (no hub)
 python mission_tester.py --offline
 
@@ -97,6 +103,11 @@ Rules that bite:
 
 - `mission_catalog.py` in the source tree holds only `TEST_MODULES`; `build_archive.py`
   appends every JSON mission to the catalog inside the ZIP.
+- `build_archive.py --install` is not a filesystem install: it unpacks the ZIP and
+  sends `main.py` plus all local imports to the hub as a multi-file MPY bundle via
+  `pybricksdev`, then starts it. The program lives in hub RAM and is lost on power off.
+- `mission_tester.py` uses the same `pybricksdev` download pipeline, but generates a
+  temporary single-mission program instead of uploading the whole archive.
 - `mission_3.json` starts at `x_mm: 100`, so the editor correctly warns that the
   robot is partly off the field — that is the data, not a bug.
 - `build_archive.py` uses `ast.Constant` (not `ast.Str`) — required on Python 3.14.

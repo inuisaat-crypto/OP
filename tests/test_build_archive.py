@@ -1,7 +1,22 @@
+import asyncio
+import sys
 import unittest
 import zipfile
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from types import ModuleType
+from unittest.mock import patch
 
-from build_archive import ARCHIVE_FILES, MISSIONS_DIR, _render_mission, build_archive
+from build_archive import (
+    ARCHIVE_FILES,
+    MISSIONS_DIR,
+    _extract_archive,
+    _install_archive_async,
+    _render_mission,
+    _wait_for_program_start,
+    build_archive,
+    main,
+)
 from mission_format import validate_mission
 
 
@@ -237,6 +252,153 @@ class BuildArchiveTests(unittest.TestCase):
         self.assertIn("mission_3.py", names)
         self.assertTrue(all(name.endswith(".py") for name in names))
         self.assertTrue(all("/" not in name for name in names))
+
+    def test_installer_extracts_only_python_files_and_finds_main(self):
+        archive_path = build_archive()
+        with TemporaryDirectory() as directory:
+            main_path = _extract_archive(archive_path, directory)
+            extracted = {path.name for path in Path(directory).iterdir()}
+
+        expected = {target for _, target in ARCHIVE_FILES} | {
+            path.stem + ".py" for path in MISSIONS_DIR.glob("mission_*.json")
+        }
+        self.assertEqual(main_path.name, "main.py")
+        self.assertEqual(extracted, expected)
+
+    def test_cli_builds_archive_by_default(self):
+        with patch("builtins.print"), patch(
+            "build_archive.build_archive", return_value=Path("fake.zip")
+        ) as build:
+            self.assertEqual(main([]), 0)
+
+        build.assert_called_once_with()
+
+    def test_cli_installs_archive_without_running_when_requested(self):
+        with patch("builtins.print"), patch(
+            "build_archive.build_archive", return_value=Path("fake.zip")
+        ), patch("build_archive.install_archive", return_value=0) as install:
+            self.assertEqual(main(["--install", "--no-run"]), 0)
+
+        install.assert_called_once_with(Path("fake.zip"), run_program=False)
+
+    def test_cli_installs_and_runs_by_default(self):
+        with patch("builtins.print"), patch(
+            "build_archive.build_archive", return_value=Path("fake.zip")
+        ), patch("build_archive.install_archive", return_value=0) as install:
+            self.assertEqual(main(["--install"]), 0)
+
+        install.assert_called_once_with(Path("fake.zip"), run_program=True)
+
+    def test_cli_rejects_no_run_without_install_and_unknown_flags(self):
+        with patch("builtins.print"):
+            self.assertEqual(main(["--no-run"]), 2)
+            self.assertEqual(main(["--wat"]), 2)
+
+    def test_wait_for_program_start_uses_hub_status(self):
+        class StatusFlag:
+            USER_PROGRAM_RUNNING = 1
+
+        class Subscription:
+            def dispose(self):
+                pass
+
+        class Observable:
+            def __init__(self, status):
+                self.status = status
+
+            def subscribe(self, callback):
+                callback(self.status)
+                return Subscription()
+
+        class Hub:
+            def __init__(self, status):
+                self.status_observable = Observable(status)
+
+        running_hub = Hub(StatusFlag.USER_PROGRAM_RUNNING)
+        idle_hub = Hub(0)
+
+        self.assertTrue(
+            asyncio.run(_wait_for_program_start(running_hub, StatusFlag, timeout=0.1))
+        )
+        self.assertFalse(
+            asyncio.run(_wait_for_program_start(idle_hub, StatusFlag, timeout=0.01))
+        )
+
+    def test_installer_downloads_and_starts_archive(self):
+        archive_path = build_archive()
+        events = []
+        running = [False]
+
+        class StatusFlag:
+            USER_PROGRAM_RUNNING = 1
+
+        class Subscription:
+            def dispose(self):
+                pass
+
+        class Observable:
+            def subscribe(self, callback):
+                if running[0]:
+                    callback(StatusFlag.USER_PROGRAM_RUNNING)
+                return Subscription()
+
+        class Device:
+            name = "Test hub"
+            address = "00:11:22:33:44:55"
+
+        class FakeHub:
+            def __init__(self, device):
+                self.device = device
+                self.status_observable = Observable()
+
+            async def connect(self):
+                events.append("connect")
+
+            async def download(self, path):
+                events.append(("download", Path(path).is_file()))
+
+            async def run(self, **kwargs):
+                events.append(("run", kwargs))
+                running[0] = True
+
+            async def disconnect(self):
+                events.append("disconnect")
+
+        async def find_device(timeout):
+            events.append(("scan", timeout))
+            return Device()
+
+        pybricksdev = ModuleType("pybricksdev")
+        pybricksdev.__path__ = []
+        ble = ModuleType("pybricksdev.ble")
+        ble.find_device = find_device
+        ble_pybricks = ModuleType("pybricksdev.ble.pybricks")
+        ble_pybricks.StatusFlag = StatusFlag
+        connections = ModuleType("pybricksdev.connections")
+        connections.__path__ = []
+        connection = ModuleType("pybricksdev.connections.pybricks")
+        connection.PybricksHubBLE = FakeHub
+        pybricksdev.ble = ble
+        pybricksdev.connections = connections
+        modules = {
+            "pybricksdev": pybricksdev,
+            "pybricksdev.ble": ble,
+            "pybricksdev.ble.pybricks": ble_pybricks,
+            "pybricksdev.connections": connections,
+            "pybricksdev.connections.pybricks": connection,
+        }
+
+        with patch.dict(sys.modules, modules), patch("builtins.print"):
+            result = asyncio.run(_install_archive_async(archive_path, True, 0.1))
+
+        self.assertEqual(result, 0)
+        self.assertEqual(events[0], ("scan", 0.1))
+        self.assertEqual(events[1], "connect")
+        self.assertEqual(events[2][0], "download")
+        self.assertTrue(events[2][1])
+        self.assertEqual(events[3][0], "run")
+        self.assertFalse(events[3][1]["wait"])
+        self.assertEqual(events[4], "disconnect")
 
 
 if __name__ == "__main__":
