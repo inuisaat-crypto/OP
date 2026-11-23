@@ -16,8 +16,7 @@
     {
       "type": "straight",
       "distance_mm": -200,
-      "speed_mm_s": 800,
-      "through": true
+      "speed_mm_s": 800
     },
     {
       "type": "turn",

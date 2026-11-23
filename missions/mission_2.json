@@ -8,6 +8,7 @@
     "heading_deg": 0
   },
   "steps": [
+    {"type": "straight", "distance_mm": 810, "speed_mm_s": 800},
     {
       "type": "attachment",
       "port": "F",
@@ -39,7 +40,7 @@
     {
       "type": "attachment",
       "port": "F",
-      "angle_deg": 160,
+      "angle_deg": 100,
       "speed_deg_s": 800
     }
   ]
