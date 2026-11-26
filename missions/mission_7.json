@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "name": "Новая миссия",
+  "color": "WHITE",
+  "start_pose": {
+    "x_mm": 1730,
+    "y_mm": 60,
+    "heading_deg": 0
+  },
+  "steps": [
+    {
+      "type": "straight",
+      "distance_mm": 460,
+      "speed_mm_s": 800
+    },
+    {
+      "type": "turn",
+      "angle_deg": 40,
+      "rate_deg_s": 360
+    },
+    {
+      "type": "straight",
+      "distance_mm": 80,
+      "speed_mm_s": 800
+    },
+    {
+      "type": "attachment",
+      "port": "F",
+      "angle_deg": 120,
+      "speed_deg_s": 800
+    },
+    {
+      "type": "turn",
+      "angle_deg": 60,
+      "rate_deg_s": 360
+    },
+    {
+      "type": "attachment",
+      "port": "F",
+      "angle_deg": -120,
+      "speed_deg_s": 800
+    },
+    {
+      "type": "straight",
+      "distance_mm": -90,
+      "speed_mm_s": 800
+    },
+    {
+      "type": "wheel_turn",
+      "angle_deg": -45,
+      "locked": "LEFT",
+      "rate_deg_s": 120,
+      "through": true
+    },
+    {
+      "type": "straight",
+      "distance_mm": 50,
+      "speed_mm_s": 800
+    },
+    {
+      "type": "attachment",
+      "port": "F",
+      "angle_deg": 150,
+      "speed_deg_s": 800
+    },
+    {
+      "type": "turn",
+      "angle_deg": -40,
+      "rate_deg_s": 180
+    }
+  ]
+}

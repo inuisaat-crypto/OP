@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23000'/%3E%3Ctext x='16' y='22' font-family='Segoe UI,Arial' font-size='14' font-weight='700' fill='%23e7e9ea' text-anchor='middle'%3EOP%3C/text%3E%3C/svg%3E" />
+    <title>OP — редактор миссий</title>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">OP</div>
+
+      <div class="file-menu">
+        <button id="file-button" class="button ghost" type="button" aria-haspopup="true" aria-expanded="false">
+          Файл
+        </button>
+        <div id="file-menu" class="menu" role="menu" hidden>
+          <button type="button" role="menuitem" data-action="open">Открыть</button>
+          <button type="button" role="menuitem" data-action="save">Сохранить</button>
+          <button type="button" role="menuitem" data-action="build">Собрать</button>
+          <div class="menu-separator" role="separator"></div>
+          <button type="button" role="menuitem" data-action="create">Создать</button>
+          <button type="button" role="menuitem" data-action="edit">Редактировать миссию</button>
+        </div>
+      </div>
+
+      <div class="icon-actions">
+        <button id="undo-button" class="icon-btn" type="button" title="Отменить (Ctrl+Z)" aria-label="Отменить">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4 3 7l3 3M3 7h6.5a3.5 3.5 0 1 1 0 7H6" /></svg>
+        </button>
+        <button id="redo-button" class="icon-btn" type="button" title="Повторить (Ctrl+Y)" aria-label="Повторить">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 4l3 3-3 3M13 7H6.5a3.5 3.5 0 1 0 0 7H10" /></svg>
+        </button>
+      </div>
+
+      <div class="view-menu">
+        <button id="view-button" class="button ghost" type="button" aria-haspopup="true" aria-expanded="false">
+          Вид
+        </button>
+        <div id="view-menu" class="menu" role="menu" hidden>
+          <button type="button" role="menuitem" data-view="toolbox">Свернуть панель блоков</button>
+          <button type="button" role="menuitem" data-view="map">Свернуть карту</button>
+          <button type="button" role="menuitem" data-view="fullscreen">Карта на весь экран</button>
+          <div class="menu-separator" role="separator"></div>
+          <button type="button" role="menuitem" data-view="play">Воспроизвести</button>
+        </div>
+      </div>
+
+      <button id="settings-button" class="icon-btn" type="button" title="Настройки" aria-label="Настройки">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.5h5.2M10.8 4.5H14M2 11.5h2.2M7.8 11.5H14" /><circle cx="9" cy="4.5" r="1.5" /><circle cx="6" cy="11.5" r="1.5" /></svg>
+      </button>
+
+      <div id="status" class="status" role="status" aria-live="polite"></div>
+    </header>
+
+    <main class="workspace-layout" id="workspace-layout">
+      <section class="editor-panel" id="editor-panel">
+        <div class="panel-strip">
+          <button id="toolbox-toggle" class="rail-toggle" type="button" aria-expanded="true" title="Свернуть панель блоков">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3 5 8l5 5" /></svg>
+          </button>
+        </div>
+        <div id="blockly"></div>
+      </section>
+
+      <aside class="map-panel" id="map-panel">
+        <div class="panel-strip end">
+          <button id="map-toggle" class="rail-toggle" type="button" aria-expanded="true" title="Свернуть карту">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3l5 5-5 5" /></svg>
+          </button>
+        </div>
+
+        <div class="map-body">
+          <div class="field-wrap" id="field-wrap">
+            <svg id="field" viewBox="0 0 2000 1140" role="img" aria-label="Поле примерно 200 на 114 сантиметров">
+              <rect x="0" y="0" width="2000" height="1140" class="field-bg" />
+              <image id="field-map-image" x="0" y="0" width="2000" height="1140" class="field-map-image" preserveAspectRatio="none" />
+              <g id="path-layer"></g>
+              <g id="robot-layer"></g>
+              <rect x="2" y="2" width="1996" height="1136" class="field-border" />
+            </svg>
+
+            <div class="player-bar">
+              <button id="play-button" class="player-play" type="button" aria-label="Воспроизвести предпросмотр">
+                <svg class="icon-play" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.5v9l7.5-4.5z" /></svg>
+                <svg class="icon-pause" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.5h2.2v9H5zM8.8 3.5H11v9H8.8z" /></svg>
+              </button>
+              <input id="player-seek" class="player-seek" type="range" min="0" max="1000" step="1" value="0" aria-label="Позиция предпросмотра" />
+              <span id="player-time" class="player-time">0.0 с</span>
+            </div>
+
+            <button id="fullscreen-button" class="fullscreen-button" type="button" aria-label="Полный экран" title="Полный экран">
+              <svg class="icon-expand" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2H2v4M10 2h4v4M14 10v4h-4M6 14H2v-4" /></svg>
+              <svg class="icon-collapse" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 6h4V2M14 6h-4V2M10 14v-4h4M6 14v-4H2" /></svg>
+            </button>
+          </div>
+
+          <div class="map-settings">
+            <label><span>X</span><input id="start-x" type="number" min="0" max="2000" step="10" value="1000" /></label>
+            <label><span>Y</span><input id="start-y" type="number" min="0" max="1140" step="10" value="570" /></label>
+            <label><span>Курс</span><input id="start-heading" type="number" min="-360" max="360" step="5" value="0" /></label>
+          </div>
+        </div>
+      </aside>
+    </main>
+
+    <dialog id="open-dialog" class="dialog">
+      <h2>Открыть миссию</h2>
+      <div id="mission-list" class="mission-list"></div>
+      <div class="dialog-actions">
+        <button type="button" class="button secondary" data-close>Отмена</button>
+      </div>
+    </dialog>
+
+    <dialog id="save-dialog" class="dialog">
+      <h2 id="save-title">Сохранить миссию</h2>
+      <label class="dialog-field">
+        <span>Номер миссии</span>
+        <input id="save-number" type="number" min="1" max="999" step="1" value="1" />
+      </label>
+      <p id="save-hint" class="dialog-hint"></p>
+      <div class="dialog-actions">
+        <button type="button" class="button secondary" data-close>Отмена</button>
+        <button type="button" class="button primary" id="save-confirm">Сохранить</button>
+      </div>
+    </dialog>
+
+    <dialog id="edit-dialog" class="dialog">
+      <h2>Редактировать миссию</h2>
+      <label class="dialog-field">
+        <span>Название</span>
+        <input id="edit-name" type="text" maxlength="60" />
+      </label>
+      <label class="dialog-field">
+        <span>Номер миссии</span>
+        <input id="edit-number" type="number" min="1" max="999" step="1" value="1" />
+      </label>
+      <label class="dialog-field">
+        <span>Цвет</span>
+        <select id="edit-color">
+          <option>BLACK</option>
+          <option>BLUE</option>
+          <option>CYAN</option>
+          <option>GREEN</option>
+          <option>MAGENTA</option>
+          <option>ORANGE</option>
+          <option>RED</option>
+          <option>VIOLET</option>
+          <option>WHITE</option>
+          <option>YELLOW</option>
+        </select>
+      </label>
+      <div class="dialog-actions">
+        <button type="button" class="button secondary" data-close>Отмена</button>
+        <button type="button" class="button primary" id="edit-confirm">Сохранить</button>
+      </div>
+    </dialog>
+
+    <dialog id="settings-dialog" class="dialog">
+      <h2>Настройки</h2>
+      <label class="dialog-field">
+        <span>Скорость предпросмотра</span>
+        <select id="set-speed">
+          <option value="0.25">0,25×</option>
+          <option value="0.5">0,5×</option>
+          <option value="1" selected>1×</option>
+          <option value="1.5">1,5×</option>
+          <option value="2">2×</option>
+        </select>
+      </label>
+      <div class="dialog-grid">
+        <label class="dialog-field">
+          <span>Разгон, мм/с²</span>
+          <input id="set-accel" type="number" min="100" max="6000" step="50" value="900" />
+        </label>
+        <label class="dialog-field">
+          <span>Торможение, мм/с²</span>
+          <input id="set-decel" type="number" min="100" max="6000" step="50" value="1100" />
+        </label>
+        <label class="dialog-field">
+          <span>Разгон поворота, °/с²</span>
+          <input id="set-turn-accel" type="number" min="60" max="3600" step="20" value="720" />
+        </label>
+        <label class="dialog-field">
+          <span>Торможение поворота, °/с²</span>
+          <input id="set-turn-decel" type="number" min="60" max="3600" step="20" value="900" />
+        </label>
+      </div>
+      <label class="switch-row"><input id="set-plan" type="checkbox" checked /> Показывать план маршрута</label>
+      <label class="switch-row"><input id="set-trail" type="checkbox" checked /> Показывать пройденный след</label>
+      <label class="switch-row"><input id="set-autosave" type="checkbox" /> Автосохранение</label>
+      <div class="dialog-actions">
+        <button type="button" class="button secondary" id="settings-reset">Сбросить</button>
+        <button type="button" class="button secondary" data-close>Отмена</button>
+        <button type="button" class="button primary" id="settings-confirm">Сохранить</button>
+      </div>
+    </dialog>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

@@ -1,0 +1,17 @@
+{
+  "name": "op-mission-editor",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n api,web \"python server.py\" \"vite --host 127.0.0.1\"",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "blockly": "^12.3.1"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "vite": "^6.4.1"
+  }
+}
