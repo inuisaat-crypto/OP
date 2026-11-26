@@ -3,14 +3,24 @@
   "name": "Миссия 4 — маршрут 0–5",
   "color": "CYAN",
   "start_pose": {
-    "x_mm": 285,
+    "x_mm": 260,
     "y_mm": 115,
     "heading_deg": 0
   },
   "steps": [
     {
+      "type": "battery_check"
+    },
+    {
       "type": "straight",
-      "distance_mm": 950,
+      "distance_mm": 820,
+      "speed_mm_s": 800,
+      "through": true
+    },
+    {
+      "type": "arc",
+      "radius_mm": -90,
+      "angle_deg": 25,
       "speed_mm_s": 800
     },
     {
@@ -20,73 +30,82 @@
     },
     {
       "type": "attachment",
-      "port": "F",
-      "angle_deg": 90,
+      "port": "E",
+      "angle_deg": -180,
       "speed_deg_s": 300
     },
     {
+      "type": "wait",
+      "duration_ms": 200
+    },
+    {
+      "type": "attachment",
+      "port": "E",
+      "angle_deg": 260,
+      "speed_deg_s": 800
+    },
+    {
       "type": "straight",
-      "distance_mm": -300,
+      "distance_mm": -410,
+      "speed_mm_s": 800,
+      "through": true
+    },
+    {
+      "type": "arc",
+      "radius_mm": -130,
+      "angle_deg": -75,
       "speed_mm_s": 800
     },
     {
-      "type": "turn",
-      "angle_deg": 140,
-      "rate_deg_s": 360
-    },
-    {
       "type": "straight",
-      "distance_mm": 300,
+      "distance_mm": 100,
       "speed_mm_s": 800
     },
     {
-      "type": "turn",
-      "angle_deg": -90,
-      "rate_deg_s": 360
+      "type": "attachment",
+      "port": "F",
+      "angle_deg": 170,
+      "speed_deg_s": 800
     },
     {
-      "type": "beep",
-      "frequency_hz": 880,
-      "duration_ms": 100
+      "type": "straight",
+      "distance_mm": -490,
+      "speed_mm_s": 800,
+      "through": true
+    },
+    {
+      "type": "wheel_turn",
+      "angle_deg": 45,
+      "locked": "LEFT",
+      "rate_deg_s": 120,
+      "through": true
+    },
+    {
+      "type": "arc",
+      "radius_mm": -200,
+      "angle_deg": 5,
+      "speed_mm_s": 300,
+      "through": true
+    },
+    {
+      "type": "straight",
+      "distance_mm": 450,
+      "speed_mm_s": 800,
+      "through": true
+    },
+    {
+      "type": "straight",
+      "distance_mm": 390,
+      "speed_mm_s": 350
     },
     {
       "type": "turn",
-      "angle_deg": 130,
+      "angle_deg": -80,
       "rate_deg_s": 360
     },
     {
       "type": "straight",
-      "distance_mm": 400,
-      "speed_mm_s": 800
-    },
-    {
-      "type": "turn",
-      "angle_deg": -90,
-      "rate_deg_s": 360
-    },
-    {
-      "type": "straight",
-      "distance_mm": 500,
-      "speed_mm_s": 800
-    },
-    {
-      "type": "turn",
-      "angle_deg": -40,
-      "rate_deg_s": 360
-    },
-    {
-      "type": "beep",
-      "frequency_hz": 880,
-      "duration_ms": 100
-    },
-    {
-      "type": "turn",
-      "angle_deg": 40,
-      "rate_deg_s": 360
-    },
-    {
-      "type": "straight",
-      "distance_mm": -700,
+      "distance_mm": 10,
       "speed_mm_s": 800
     }
   ]
